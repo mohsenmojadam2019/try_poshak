@@ -42,6 +42,47 @@ class FashnClient:
             "Content-Type": "application/json",
         }
 
+    def _build_payload(
+        self,
+        *,
+        person_image: str,
+        garment_image: str,
+        category: str,
+        mode: str,
+    ) -> dict[str, object]:
+        if self.model == "tryon-max":
+            category_prompt = {
+                "tops": "Apply only this upper-body garment to the person.",
+                "bottoms": "Apply only this lower-body garment to the person.",
+                "one-pieces": "Dress the person in this one-piece garment.",
+            }[category]
+            return {
+                "model_name": "tryon-max",
+                "inputs": {
+                    "model_image": person_image,
+                    "product_image": garment_image,
+                    "prompt": category_prompt,
+                },
+            }
+
+        if self.model != "tryon-v1.6":
+            raise FashnError(
+                "FASHN_MODEL باید tryon-v1.6 یا tryon-max باشد."
+            )
+
+        return {
+            "model_name": "tryon-v1.6",
+            "inputs": {
+                "model_image": person_image,
+                "garment_image": garment_image,
+                "category": category,
+                "mode": mode,
+                "output_format": "jpeg",
+                "return_base64": True,
+                "num_samples": 1,
+            },
+        }
+
     async def run_try_on(
         self,
         *,
@@ -53,18 +94,12 @@ class FashnClient:
         if not self.configured:
             raise FashnError("کلید FASHN_API_KEY روی سرور تنظیم نشده است.")
 
-        payload = {
-            "model_name": self.model,
-            "inputs": {
-                "model_image": person_image,
-                "garment_image": garment_image,
-                "category": category,
-                "mode": mode,
-                "output_format": "jpeg",
-                "return_base64": True,
-                "num_samples": 1,
-            },
-        }
+        payload = self._build_payload(
+            person_image=person_image,
+            garment_image=garment_image,
+            category=category,
+            mode=mode,
+        )
 
         timeout = httpx.Timeout(self.timeout_seconds, connect=20.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
