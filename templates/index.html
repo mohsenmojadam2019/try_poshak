@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <title>پرو مجازی لباس | Try Poshak</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Try Poshak">
+      <span class="brand-mark">TP</span>
+      <span>
+        <strong>Try Poshak</strong>
+        <small>AI Virtual Fitting Room</small>
+      </span>
+    </a>
+    <div class="provider-pill {{ 'ready' if provider_ready else 'offline' }}">
+      <span class="dot"></span>
+      {% if provider_ready %}
+      موتور AI آماده است
+      {% else %}
+      API Key تنظیم نشده
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">پرو مجازی هوشمند</span>
+        <h1>لباس را انتخاب کن؛ روی تن مشتری ببین.</h1>
+        <p>عکس مشتری و لباس را بده. سیستم بر اساس نوع لباس، پیراهن را روی بالاتنه، شلوار را روی پایین‌تنه و لباس یک‌تکه را روی کل استایل اعمال می‌کند.</p>
+      </div>
+      <div class="hero-badges">
+        <span>Python + FastAPI</span>
+        <span>{{ model_name }}</span>
+        <span>Mobile Ready</span>
+      </div>
+    </section>
+
+    <section class="workspace" aria-label="پرو مجازی">
+      <article class="panel person-panel">
+        <div class="panel-head">
+          <div>
+            <span class="step">۱</span>
+            <h2>عکس مشتری</h2>
+          </div>
+          <span class="mini-note">تمام قد یا نیم‌تنه واضح</span>
+        </div>
+
+        <label class="upload-zone" id="personDrop" for="personInput">
+          <input id="personInput" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden>
+          <img id="personPreview" alt="" hidden>
+          <div class="upload-empty" id="personEmpty">
+            <div class="upload-icon">◎</div>
+            <strong>عکس مشتری را اضافه کن</strong>
+            <span>انتخاب فایل یا عکس گرفتن با موبایل</span>
+            <button type="button" class="ghost-btn">انتخاب عکس</button>
+          </div>
+          <div class="camera-guide" id="cameraGuide" hidden>
+            <span class="guide-head"></span>
+            <span class="guide-body"></span>
+            <small>کادر بدن کامل باشد</small>
+          </div>
+        </label>
+
+        <div class="tips">
+          <span>نور روبه‌رو</span>
+          <span>بدن پوشانده نشود</span>
+          <span>بدون تاری</span>
+        </div>
+      </article>
+
+      <article class="panel garment-panel">
+        <div class="panel-head">
+          <div>
+            <span class="step">۲</span>
+            <h2>انتخاب لباس</h2>
+          </div>
+          <span class="mini-note">دسته را دقیق انتخاب کن</span>
+        </div>
+
+        <div class="category-grid" role="radiogroup" aria-label="نوع لباس">
+          <button class="category-card active" data-category="tops" type="button">
+            <span class="garment-glyph shirt"><i></i></span>
+            <strong>پیراهن / تی‌شرت</strong>
+            <small>بالاتنه</small>
+          </button>
+          <button class="category-card" data-category="bottoms" type="button">
+            <span class="garment-glyph pants"><i></i></span>
+            <strong>شلوار / دامن</strong>
+            <small>پایین‌تنه</small>
+          </button>
+          <button class="category-card" data-category="one-pieces" type="button">
+            <span class="garment-glyph dress"><i></i></span>
+            <strong>لباس یک‌تکه</strong>
+            <small>تمام استایل</small>
+          </button>
+        </div>
+
+        <label class="garment-upload" id="garmentDrop" for="garmentInput">
+          <input id="garmentInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+          <img id="garmentPreview" alt="" hidden>
+          <div id="garmentEmpty" class="garment-empty">
+            <span class="plus">+</span>
+            <div>
+              <strong>تصویر محصول را بارگذاری کن</strong>
+              <small>عکس روبه‌رو با پس‌زمینه ساده بهترین نتیجه را می‌دهد</small>
+            </div>
+          </div>
+        </label>
+
+        <div class="quality-row">
+          <label for="modeSelect">کیفیت پردازش</label>
+          <select id="modeSelect">
+            <option value="performance">سریع</option>
+            <option value="balanced" selected>متعادل</option>
+            <option value="quality">بیشترین کیفیت</option>
+          </select>
+        </div>
+      </article>
+
+      <article class="panel result-panel">
+        <div class="panel-head">
+          <div>
+            <span class="step">۳</span>
+            <h2>نتیجه پرو</h2>
+          </div>
+          <span class="mini-note">AI Preview</span>
+        </div>
+
+        <div class="result-stage" id="resultStage">
+          <div class="result-placeholder" id="resultPlaceholder">
+            <div class="silhouette">
+              <span class="sil-head"></span>
+              <span class="sil-body"></span>
+            </div>
+            <strong>آماده برای پرو</strong>
+            <span>دو تصویر را انتخاب کن و «پرو کن» را بزن.</span>
+          </div>
+          <img id="resultImage" alt="نتیجه پرو مجازی" hidden>
+          <div class="processing" id="processing" hidden>
+            <div class="spinner"></div>
+            <strong>در حال پوشاندن لباس...</strong>
+            <span>مدل، فرم بدن و جزئیات لباس را پردازش می‌کند.</span>
+          </div>
+        </div>
+
+        <button id="tryOnButton" class="primary-btn" type="button">
+          <span>پرو کن</span>
+          <b>✦</b>
+        </button>
+
+        <div class="result-actions" id="resultActions" hidden>
+          <button id="downloadButton" type="button" class="secondary-btn">دانلود نتیجه</button>
+          <button id="resetButton" type="button" class="secondary-btn">پرو لباس دیگر</button>
+        </div>
+
+        <p class="disclaimer">خروجی برای تجسم ظاهری است و اندازه واقعی، فیت یا سایزبندی دقیق لباس را تضمین نمی‌کند.</p>
+      </article>
+    </section>
+
+    <section class="flow">
+      <div>
+        <b>01</b>
+        <span>عکس مشتری</span>
+      </div>
+      <i></i>
+      <div>
+        <b>02</b>
+        <span>انتخاب محصول</span>
+      </div>
+      <i></i>
+      <div>
+        <b>03</b>
+        <span>پردازش AI</span>
+      </div>
+      <i></i>
+      <div>
+        <b>04</b>
+        <span>نمایش روی بدن</span>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    window.TRY_POSHAK = {
+      providerReady: {{ 'true' if provider_ready else 'false' }}
+    };
+  </script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
