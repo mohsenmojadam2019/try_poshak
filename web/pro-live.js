@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
+import { RiggedGarmentLayer } from "./rigged-layer.js";
 
 const IDX = {
   NOSE: 0, L_EAR: 7, R_EAR: 8,
@@ -183,6 +184,8 @@ class UltraLiveStudio {
     this.stopButton = document.getElementById("ultraStop");
     this.snapshotButton = document.getElementById("ultraSnapshot");
     this.physicsInput = document.getElementById("ultraPhysics");
+    this.riggedModeButtons = [...document.querySelectorAll("[data-ultra-render-mode]")];
+    this.riggedModelButtons = [...document.querySelectorAll("[data-rigged-model]")];
     this.fpsLabel = document.getElementById("ultraFPS");
     this.poseLabel = document.getElementById("ultraPose");
     this.yawLabel = document.getElementById("ultraYaw");
@@ -192,18 +195,30 @@ class UltraLiveStudio {
 
     this.poseLandmarker = null;
     this.fileset = null;
+    this.poseInterval = 34;
+    this.poseModelName = "Full";
     this.renderer = null;
     this.scene = null;
     this.camera = null;
+    this.riggedCamera = null;
     this.material = null;
     this.texture = null;
     this.grids = {};
+    this.riggedLayer = null;
+    this.riggedMode = true;
+    this.riggedModel = {
+      name: "Basic Tee 3D",
+      url: "/static/3d/garments/men/basictee/basictee_live.glb",
+      sleeveReach: 0.74,
+    };
     this.running = false;
     this.stream = null;
     this.facing = "user";
     this.lastDetect = 0;
     this.lastRender = performance.now();
     this.lastPoseAt = 0;
+    this.poseLostFrames = 0;
+    this.poseLostFrameLimit = 10;
     this.lastTorsoX = null;
     this.motionX = 0;
     this.smoothYaw = 0;
@@ -228,6 +243,7 @@ class UltraLiveStudio {
     this.occlusionCtx = this.occlusion.getContext("2d", { alpha: true });
     this.setupEvents();
     this.syncInitialGarment();
+    this.syncFramingMode();
     this.setButtons(false);
     this.engineLabel.textContent = "MediaPipe + WebGL";
   }
@@ -238,14 +254,89 @@ class UltraLiveStudio {
     this.switchButton.addEventListener("click", () => this.switchCamera());
     this.snapshotButton.addEventListener("click", () => this.snapshot());
 
+    this.riggedModeButtons.forEach((button) => {
+      button.addEventListener("click", async () => {
+        const mode = button.dataset.ultraRenderMode;
+        this.riggedMode = mode === "rigged";
+        this.riggedModeButtons.forEach((b) => b.classList.toggle("active", b === button));
+        this.syncFramingMode();
+        if (this.riggedMode) {
+          this.garmentLabel.textContent = this.garment.name + " • 3D";
+          if (this.riggedLayer) {
+            this.loading.hidden = false;
+            try {
+              await this.riggedLayer.load(this.riggedModel.url);
+              this.riggedLayer.setTint(this.garmentTint());
+              this.riggedLayer.setEnabled(true);
+              this.setMode("Rigged 3D آماده");
+            } catch (error) {
+              this.setMode("لود لباس سه‌بعدی ناموفق بود");
+            } finally {
+              this.loading.hidden = true;
+            }
+          }
+        } else {
+          this.riggedLayer?.setEnabled(false);
+          this.garmentLabel.textContent = this.garment.name;
+          if (this.renderer && !this.texture) {
+            this.prepareGarment().catch((err) => this.setMode("خطا در لباس: " + err.message));
+          }
+        }
+      });
+    });
+
+    this.riggedModelButtons.forEach((button) => {
+      button.addEventListener("click", async () => {
+        this.riggedModel = {
+          name: button.dataset.riggedName || button.textContent.trim(),
+          url: button.dataset.riggedModel,
+          sleeveReach: Number(button.dataset.sleeveReach || 0.75),
+        };
+        this.riggedModelButtons.forEach((b) => b.classList.toggle("active", b === button));
+        this.garmentLabel.textContent = this.garment.name + " • 3D";
+        if (this.riggedMode && this.riggedLayer) {
+          this.loading.hidden = false;
+          try {
+            await this.riggedLayer.load(this.riggedModel.url);
+            this.riggedLayer.setTint(this.garmentTint());
+            this.riggedLayer.setEnabled(true);
+            this.setMode("مدل سه‌بعدی تغییر کرد");
+          } catch (error) {
+            this.setMode("مدل سه‌بعدی لود نشد");
+          } finally {
+            this.loading.hidden = true;
+          }
+        }
+      });
+    });
+
     window.addEventListener("tryposhak:garmentchange", (event) => {
       const detail = event.detail || {};
       this.garment.name = detail.name || this.garment.name;
       this.garment.category = detail.category || this.garment.category;
       this.garment.src = detail.src || null;
       this.garment.file = detail.file || null;
-      this.garmentLabel.textContent = this.garment.name;
-      this.prepareGarment().catch((err) => this.setMode("خطا در لباس: " + err.message));
+
+      // The current rigged asset is an upper-body garment. Never show a shirt
+      // when the user selects trousers: switch transparently to the dedicated
+      // lower-body 2D mesh until a licensed rigged pants asset is available.
+      if (this.garment.category === "bottoms" && this.riggedMode) {
+        this.riggedMode = false;
+        this.riggedLayer?.setEnabled(false);
+        this.riggedModeButtons.forEach((b) => {
+          b.classList.toggle("active", b.dataset.ultraRenderMode === "mesh2d");
+        });
+        this.setMode("حالت شلوار فعال شد");
+      }
+
+      this.syncFramingMode();
+      if (this.riggedMode) {
+        this.garmentLabel.textContent = this.garment.name + " • 3D";
+        this.riggedLayer?.setTint(this.garmentTint());
+      } else {
+        this.garmentLabel.textContent = this.garment.name;
+        this.prepareGarment().catch((err) => this.setMode("خطا در لباس: " + err.message));
+      }
     });
 
     window.addEventListener("resize", () => this.resize());
@@ -262,6 +353,26 @@ class UltraLiveStudio {
     }
   }
 
+  syncFramingMode() {
+    const isTop = this.riggedMode || this.garment.category === "tops";
+    this.root.classList.toggle("upper-body-mode", isTop);
+    const hint = this.guide?.querySelector("small");
+    if (hint) {
+      hint.textContent = isTop
+        ? "برای پیراهن سر و هر دو شانه کافی است؛ نشسته هم می‌شود"
+        : "برای شلوار لگن و زانوها داخل کادر باشند";
+    }
+  }
+
+  garmentTint() {
+    const src = (this.garment.src || "").toLowerCase();
+    const name = (this.garment.name || "").toLowerCase();
+    if (src.includes("shirt_white") || name.includes("سفید")) return "#ecebe7";
+    if (src.includes("tee_olive") || name.includes("زیتون")) return "#526547";
+    if (src.includes("shirt_navy") || name.includes("سرمه")) return "#173653";
+    return "#34495e";
+  }
+
   setButtons(running) {
     this.startButton.disabled = running;
     this.switchButton.disabled = !running;
@@ -275,30 +386,59 @@ class UltraLiveStudio {
 
   async initPose() {
     if (this.poseLandmarker) return;
-    this.setMode("در حال بارگذاری Body Tracker...");
+    this.setMode("در حال بارگذاری Body Tracker دقیق...");
+
+    const mobile = matchMedia("(pointer:coarse)").matches ||
+      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const heavyRequested = new URLSearchParams(location.search).get("pose") === "heavy";
+
+    // Full is the default: substantially more accurate than Lite but starts much
+    // faster than Heavy. Heavy remains available with ?pose=heavy for controlled
+    // desktop tests.
+    const candidates = heavyRequested && !mobile
+      ? [
+          { name: "Heavy", path: "/static/models/pose_landmarker_heavy.task", interval: 44 },
+          { name: "Full", path: "/static/models/pose_landmarker_full.task", interval: 36 },
+          { name: "Lite", path: "/static/models/pose_landmarker_lite.task", interval: 30 },
+        ]
+      : [
+          { name: "Full", path: "/static/models/pose_landmarker_full.task", interval: mobile ? 42 : 36 },
+          { name: "Lite", path: "/static/models/pose_landmarker_lite.task", interval: 30 },
+        ];
+
     try {
       this.fileset = await FilesetResolver.forVisionTasks("/static/mediapipe/wasm");
-      const options = {
-        baseOptions: {
-          modelAssetPath: "/static/models/pose_landmarker_lite.task",
-          delegate: "GPU",
-        },
-        runningMode: "VIDEO",
-        numPoses: 1,
-        minPoseDetectionConfidence: 0.45,
-        minPosePresenceConfidence: 0.45,
-        minTrackingConfidence: 0.45,
-        outputSegmentationMasks: false,
-      };
-      try {
-        this.poseLandmarker = await PoseLandmarker.createFromOptions(this.fileset, options);
-        this.engineLabel.textContent = "MediaPipe GPU + WebGL";
-      } catch (_) {
-        options.baseOptions.delegate = "CPU";
-        this.poseLandmarker = await PoseLandmarker.createFromOptions(this.fileset, options);
-        this.engineLabel.textContent = "MediaPipe CPU + WebGL";
+      let lastError = null;
+
+      for (const model of candidates) {
+        for (const delegate of ["GPU", "CPU"]) {
+          const options = {
+            baseOptions: {
+              modelAssetPath: model.path,
+              delegate,
+            },
+            runningMode: "VIDEO",
+            numPoses: 1,
+            minPoseDetectionConfidence: 0.58,
+            minPosePresenceConfidence: 0.56,
+            minTrackingConfidence: 0.68,
+            outputSegmentationMasks: false,
+          };
+
+          try {
+            this.poseLandmarker = await PoseLandmarker.createFromOptions(this.fileset, options);
+            this.poseInterval = model.interval;
+            this.poseModelName = model.name;
+            this.engineLabel.textContent = `MediaPipe ${model.name} ${delegate} + WebGL`;
+            this.setMode(`Body Tracker ${model.name} آماده`);
+            return;
+          } catch (error) {
+            lastError = error;
+          }
+        }
       }
-      this.setMode("Body Tracker آماده");
+
+      throw lastError || new Error("Pose model unavailable");
     } catch (error) {
       this.setMode("Body Tracker لود نشد");
       throw error;
@@ -311,6 +451,22 @@ class UltraLiveStudio {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -10, 10);
     this.camera.position.z = 5;
 
+    this.riggedCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    this.riggedCamera.position.set(0, 0, 2.5);
+    this.riggedCamera.lookAt(0, 0, 0);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.92);
+    this.scene.add(ambient);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.15);
+    keyLight.position.set(0.5, 1.0, 2.0);
+    this.scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xd8ecff, 0.48);
+    fillLight.position.set(-0.8, 0.6, 1.8);
+    this.scene.add(fillLight);
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.42);
+    rimLight.position.set(0, 1.0, -2.0);
+    this.scene.add(rimLight);
+
     this.renderer = new THREE.WebGLRenderer({
       alpha: true,
       antialias: true,
@@ -319,6 +475,9 @@ class UltraLiveStudio {
     });
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
     this.mount.appendChild(this.renderer.domElement);
 
     const vertexShader = `
@@ -375,7 +534,27 @@ class UltraLiveStudio {
     this.grids.leftLeg = new DynamicGrid(this.scene, 5, 15, [0.06, 0.25, 0.49, 0.99], this.material);
     this.grids.rightLeg = new DynamicGrid(this.scene, 5, 15, [0.51, 0.25, 0.94, 0.99], this.material);
 
+    this.riggedLayer = new RiggedGarmentLayer(this.scene);
     this.resize();
+  }
+
+  async prewarm() {
+    if (this.running || !this.riggedMode) return;
+    try {
+      this.initRenderer();
+      const started = performance.now();
+      await Promise.all([
+        this.initPose(),
+        this.riggedLayer.load(this.riggedModel.url),
+      ]);
+      this.riggedLayer.setTint(this.garmentTint());
+      this.riggedLayer.setEnabled(false);
+      const ms = Math.round(performance.now() - started);
+      this.setMode(`آماده شروع • prewarm ${ms}ms`);
+    } catch (error) {
+      // Prewarm is opportunistic. Start() will retry and surface a real error.
+      this.setMode("آماده شروع");
+    }
   }
 
   async start() {
@@ -386,7 +565,14 @@ class UltraLiveStudio {
       await this.initPose();
       this.initRenderer();
       this.setMode("در حال آماده‌سازی لباس...");
-      await this.prepareGarment();
+      if (this.riggedMode) {
+        await this.riggedLayer.load(this.riggedModel.url);
+        this.riggedLayer.setTint(this.garmentTint());
+        this.riggedLayer.setEnabled(true);
+        this.garmentLabel.textContent = this.garment.name + " • 3D";
+      } else {
+        await this.prepareGarment();
+      }
       this.setMode("در انتظار دسترسی دوربین...");
       await this.openCamera();
       this.setMode("دوربین آماده؛ شروع رهگیری...");
@@ -432,13 +618,15 @@ class UltraLiveStudio {
       ]).finally(() => clearTimeout(timer));
     };
 
+    const stageRect = document.getElementById("ultraStage")?.getBoundingClientRect();
+    const portrait = Boolean(stageRect && stageRect.height > stageRect.width);
     const preferred = {
       audio: false,
       video: {
         facingMode: { ideal: this.facing },
-        width: { ideal: 1280 },
-        height: { ideal: 960 },
-        frameRate: { ideal: 30, max: 60 },
+        width: { ideal: portrait ? 720 : 960 },
+        height: { ideal: portrait ? 960 : 540 },
+        frameRate: { ideal: 30, max: 30 },
       },
     };
 
@@ -587,6 +775,11 @@ class UltraLiveStudio {
       this.camera.top = 1;
       this.camera.bottom = -1;
       this.camera.updateProjectionMatrix();
+
+      if (this.riggedCamera) {
+        this.riggedCamera.aspect = aspect;
+        this.riggedCamera.updateProjectionMatrix();
+      }
     }
 
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -627,32 +820,65 @@ class UltraLiveStudio {
   }
 
   computeYaw(world) {
-    if (!world || !world[IDX.L_SHOULDER] || !world[IDX.R_SHOULDER] || !world[IDX.L_HIP] || !world[IDX.R_HIP]) {
+    if (!world || !world[IDX.L_SHOULDER] || !world[IDX.R_SHOULDER]) {
       return this.smoothYaw;
     }
-    const ls = world[IDX.L_SHOULDER], rs = world[IDX.R_SHOULDER];
-    const lh = world[IDX.L_HIP], rh = world[IDX.R_HIP];
-    const sx = rs.x - ls.x, sy = rs.y - ls.y, sz = rs.z - ls.z;
-    const ux = (ls.x + rs.x) * 0.5 - (lh.x + rh.x) * 0.5;
-    const uy = (ls.y + rs.y) * 0.5 - (lh.y + rh.y) * 0.5;
-    const uz = (ls.z + rs.z) * 0.5 - (lh.z + rh.z) * 0.5;
-    const fx = sy * uz - sz * uy;
-    const fz = sx * uy - sy * ux;
-    let yaw = Math.atan2(fx, Math.abs(fz) + 1e-5);
-    yaw = clamp(yaw, -1.05, 1.05);
-    this.smoothYaw = lerp(this.smoothYaw, yaw, 0.18);
+
+    const ls = world[IDX.L_SHOULDER];
+    const rs = world[IDX.R_SHOULDER];
+    const hipVisible = (this.landmarks?.[IDX.L_HIP]?.visibility ?? 0) > 0.28 &&
+      (this.landmarks?.[IDX.R_HIP]?.visibility ?? 0) > 0.28;
+
+    let yaw = this.smoothYaw;
+
+    if (hipVisible && world[IDX.L_HIP] && world[IDX.R_HIP]) {
+      const lh = world[IDX.L_HIP], rh = world[IDX.R_HIP];
+      const sx = rs.x - ls.x, sy = rs.y - ls.y, sz = rs.z - ls.z;
+      const ux = (ls.x + rs.x) * 0.5 - (lh.x + rh.x) * 0.5;
+      const uy = (ls.y + rs.y) * 0.5 - (lh.y + rh.y) * 0.5;
+      const uz = (ls.z + rs.z) * 0.5 - (lh.z + rh.z) * 0.5;
+      const fx = sy * uz - sz * uy;
+      const fz = sx * uy - sy * ux;
+      yaw = Math.atan2(fx, Math.abs(fz) + 1e-5);
+    } else {
+      // Seated / cropped upper-body fallback. Shoulder depth difference alone
+      // gives a stable turn cue when hips are outside the camera frame.
+      const shoulderX = Math.abs(rs.x - ls.x);
+      const shoulderZ = rs.z - ls.z;
+      yaw = Math.atan2(shoulderZ, shoulderX + 1e-5) * 1.35;
+    }
+
+    yaw = clamp(yaw, -1.0, 1.0);
+    this.smoothYaw = lerp(this.smoothYaw, yaw, 0.20);
     return this.smoothYaw;
   }
 
   poseQuality(lm) {
-    const ids = [11,12,23,24,25,26,27,28];
+    const isTopMode = this.riggedMode || this.garment.category === "tops";
+    const ids = isTopMode
+      ? [0, 11, 12, 13, 14, 15, 16]
+      : [23, 24, 25, 26, 27, 28];
+
     let sum = 0;
     for (const i of ids) sum += lm[i]?.visibility ?? 0;
     return sum / ids.length;
   }
 
+  poseReadyForCurrentGarment(lm) {
+    const isTopMode = this.riggedMode || this.garment.category === "tops";
+    if (isTopMode) {
+      const ls = lm[IDX.L_SHOULDER]?.visibility ?? 0;
+      const rs = lm[IDX.R_SHOULDER]?.visibility ?? 0;
+      return ls > 0.28 && rs > 0.28;
+    }
+
+    const ids = [IDX.L_HIP, IDX.R_HIP, IDX.L_KNEE, IDX.R_KNEE];
+    return ids.every((i) => (lm[i]?.visibility ?? 0) > 0.28);
+  }
+
   hideGarment() {
     Object.values(this.grids).forEach((g) => g?.setVisible(false));
+    this.riggedLayer?.setEnabled(false);
   }
 
   updateTopTargets(lm, metrics, yaw) {
@@ -817,11 +1043,13 @@ class UltraLiveStudio {
     const lE=px(IDX.L_ELBOW), rE=px(IDX.R_ELBOW);
     const lW=px(IDX.L_WRIST), rW=px(IDX.R_WRIST);
     const shoulderPx=Math.hypot(rS.x-lS.x,rS.y-lS.y);
-    const reach=this.garment.category==="tops"?clamp(this.garment.sleeveReach,0.45,1.9):0.2;
+    const reach=this.riggedMode
+      ? clamp(this.riggedModel.sleeveReach || 0.75,0.45,1.9)
+      : (this.garment.category==="tops"?clamp(this.garment.sleeveReach,0.45,1.9):0.2);
 
     const armPath=(s,e,wrist)=>{
       let start;
-      if(this.garment.category==="tops"){
+      if(this.riggedMode || this.garment.category==="tops"){
         start = reach<=1 ? mixPoint(s,e,clamp(reach,0.35,0.95)) : mixPoint(e,wrist,clamp(reach-1,0,0.88));
       } else {
         start=s;
@@ -850,26 +1078,32 @@ class UltraLiveStudio {
 
   updatePose(timestamp) {
     if (!this.poseLandmarker || this.video.readyState < 2) return;
-    if (timestamp - this.lastDetect < 32) return;
+    if (timestamp - this.lastDetect < this.poseInterval) return;
     this.lastDetect = timestamp;
     const start = performance.now();
 
     try {
       const result = this.poseLandmarker.detectForVideo(this.video, timestamp);
       if (!result.landmarks?.length) {
+        this.poseLostFrames += 1;
+        if (this.landmarks && this.poseLostFrames <= this.poseLostFrameLimit) {
+          this.poseLabel.textContent="Tracking…";
+          return;
+        }
         this.poseReady=false;
         this.landmarks=null;
         this.hideGarment();
         this.guide.hidden=false;
-        this.poseLabel.textContent="بدن پیدا نشد";
+        this.poseLabel.textContent="شانه‌ها پیدا نشد";
         return;
       }
+      this.poseLostFrames = 0;
       const dt = this.lastPoseAt ? (timestamp-this.lastPoseAt)/1000 : 1/30;
       this.lastPoseAt=timestamp;
       this.landmarks=this.smoother.update(result.landmarks[0],dt);
       this.worldLandmarks=result.worldLandmarks?.[0] || null;
       const q=this.poseQuality(this.landmarks);
-      this.poseReady=q>0.38;
+      this.poseReady=this.poseReadyForCurrentGarment(this.landmarks);
       this.poseLabel.textContent=Math.round(q*100)+"٪";
       this.guide.hidden=this.poseReady;
       const inferMs=performance.now()-start;
@@ -880,7 +1114,7 @@ class UltraLiveStudio {
   }
 
   renderGarment(dt, timestamp) {
-    if (!this.renderer || !this.poseReady || !this.landmarks || !this.texture) {
+    if (!this.renderer || !this.poseReady || !this.landmarks) {
       this.hideGarment();
       if (this.renderer) this.renderer.render(this.scene,this.camera);
       return;
@@ -888,6 +1122,31 @@ class UltraLiveStudio {
 
     const metrics=this.coverMetrics();
     const yaw=this.computeYaw(this.worldLandmarks);
+
+    if (this.riggedMode && this.riggedLayer?.ready) {
+      Object.values(this.grids).forEach((g) => g?.setVisible(false));
+      this.riggedLayer.setEnabled(true);
+      this.riggedLayer.update(
+        this.landmarks,
+        this.worldLandmarks,
+        this.riggedCamera,
+        metrics,
+        yaw,
+        dt,
+      );
+      this.renderer.render(this.scene,this.riggedCamera);
+      this.drawOcclusion(this.landmarks,metrics);
+      this.yawLabel.textContent=Math.round(yaw*180/Math.PI)+"°";
+      return;
+    }
+
+    this.riggedLayer?.setEnabled(false);
+    if (!this.texture) {
+      this.hideGarment();
+      this.renderer.render(this.scene,this.camera);
+      return;
+    }
+
     if(this.garment.category==="bottoms") this.updateBottomTargets(this.landmarks,metrics,yaw);
     else this.updateTopTargets(this.landmarks,metrics,yaw);
 
@@ -927,6 +1186,24 @@ class UltraLiveStudio {
     this.raf=requestAnimationFrame((t)=>this.loop(t));
   }
 
+  async previewRiggedModel() {
+    try {
+      this.initRenderer();
+      this.idle.hidden = true;
+      this.loading.hidden = false;
+      await this.riggedLayer.load(this.riggedModel.url);
+      this.riggedLayer.debugShow(this.riggedCamera);
+      this.renderer.render(this.scene, this.riggedCamera);
+      this.garmentLabel.textContent = this.riggedModel.name;
+      this.setMode("3D Rigged Preview");
+    } catch (error) {
+      this.setMode("خطای پیش‌نمایش سه‌بعدی");
+      console.error(error);
+    } finally {
+      this.loading.hidden = true;
+    }
+  }
+
   snapshot() {
     if (!this.running) return;
     const stage=document.getElementById("ultraStage");
@@ -959,8 +1236,29 @@ class UltraLiveStudio {
 function boot() {
   try {
     window.TryPoshakUltraLive = new UltraLiveStudio();
-    if (new URLSearchParams(location.search).get("ultraAutoStart") === "1") {
-      setTimeout(() => window.TryPoshakUltraLive?.start(), 350);
+    const params = new URLSearchParams(location.search);
+    if (params.get("ultraTestView") === "1") {
+      document.body.classList.add("ultra-test-view");
+    }
+    if (!params.has("ultraAutoStart") && !params.has("riggedPreview")) {
+      const warm = () => window.TryPoshakUltraLive?.prewarm();
+      if ("requestIdleCallback" in window) {
+        requestIdleCallback(warm, { timeout: 1200 });
+      } else {
+        setTimeout(warm, 700);
+      }
+    }
+
+    if (params.get("riggedPreview") === "1") {
+      setTimeout(() => {
+        document.getElementById("ultraStudio")?.scrollIntoView({ block: "start" });
+        window.TryPoshakUltraLive?.previewRiggedModel();
+      }, 220);
+    } else if (params.get("ultraAutoStart") === "1") {
+      setTimeout(() => {
+        document.getElementById("ultraStudio")?.scrollIntoView({ block: "start" });
+        window.TryPoshakUltraLive?.start();
+      }, 350);
     }
   } catch (error) {
     console.error("Ultra Live boot failed", error);

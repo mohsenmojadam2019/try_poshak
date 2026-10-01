@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#eef1f4">
   <title>پرو مجازی لباس | Try Poshak</title>
   <link rel="stylesheet" href="/static/styles.css?v=10">
-  <link rel="stylesheet" href="/static/pro-live.css?v=1">
+  <link rel="stylesheet" href="/static/pro-live.css?v=6">
 </head>
 <body>
 <header class="topbar">
@@ -23,9 +23,9 @@
 <main class="shell">
   <section class="hero">
     <div>
-      <span class="eyebrow">پرو مجازی لباس با عکس تمام‌قد</span>
+      <span class="eyebrow">پرو مجازی لباس با عکس یا دوربین</span>
       <h1>عکس خودت را بفرست، لباس را انتخاب کن، همان لحظه ببین.</h1>
-      <p>اول یک عکس تمام‌قد و روبه‌رو انتخاب کن. بعد پیراهن یا شلوار را بزن؛ موتور محلی پایتون نقاط بدن را پیدا می‌کند، لباس را تغییر شکل می‌دهد و مستقیم روی بدن می‌نشاند. هیچ API خارجی و سرویس مولد تصویر استفاده نمی‌شود.</p>
+      <p>برای پیراهن لازم نیست تمام‌قد بایستی؛ نشسته یا نیم‌تنه هم کافی است اگر سر و هر دو شانه واضح باشند. فقط برای شلوار بهتر است لگن و زانوها داخل کادر باشند.</p>
     </div>
     <div class="hero-steps">
       <div><b>۱</b><span>عکس تمام‌قد</span></div><i></i>
@@ -35,7 +35,7 @@
   </section>
 
   <section class="onboarding">
-    <article><span class="mini-icon person-icon"></span><div><b>۱. درست بایست</b><small>تمام بدن، از سر تا کف پا، داخل کادر باشد.</small></div></article>
+    <article><span class="mini-icon person-icon"></span><div><b>۱. لازم نیست بایستی</b><small>برای بالاتنه، سر و شانه‌ها کافی است؛ نشسته هم می‌شود.</small></div></article>
     <article><span class="mini-icon light-icon">☼</span><div><b>۲. نور روبه‌رو</b><small>عکس واضح، بدون تاری و بدون پوشاندن بدن.</small></div></article>
     <article><span class="mini-icon shirt-icon"></span><div><b>۳. لباس را بزن</b><small>پیراهن یا شلوار را انتخاب کن؛ دسته خودکار تنظیم می‌شود.</small></div></article>
   </section>
@@ -43,7 +43,7 @@
   <section class="studio">
     <article class="card person-card">
       <div class="card-head">
-        <div><span class="step">۱</span><div><h2>عکس مشتری</h2><p>تمام‌قد و از روبه‌رو</p></div></div>
+        <div><span class="step">۱</span><div><h2>عکس مشتری</h2><p>روبه‌رو؛ نیم‌تنه هم قابل قبول است</p></div></div>
         <span class="badge">ضروری</span>
       </div>
 
@@ -64,8 +64,8 @@
       </label>
 
       <div class="photo-guide">
-        <div class="guide-example good"><span class="example-person centered"></span><b>✓ درست</b><small>تمام بدن، وسط کادر</small></div>
-        <div class="guide-example bad"><span class="example-person cropped"></span><b>× اشتباه</b><small>سر یا پاها بیرون کادر</small></div>
+        <div class="guide-example good"><span class="example-person centered"></span><b>✓ درست</b><small>برای پیراهن: سر و شانه‌ها واضح</small></div>
+        <div class="guide-example bad"><span class="example-person cropped"></span><b>× اشتباه</b><small>فقط اگر شانه‌ها ناقص باشند مشکل است</small></div>
       </div>
       <a class="camera-shortcut" href="#liveStudio"><span>◉</span> استفاده از دوربین زنده موبایل یا لپ‌تاپ</a>
     </article>
@@ -109,7 +109,7 @@
       </div>
 
       <div class="preview-stage" id="previewStage">
-        <div class="preview-empty" id="previewEmpty"><span class="empty-body"></span><b>اول عکس تمام‌قد را اضافه کن</b><small>بعد لباس را انتخاب کن؛ پایتون آن را روی بدن جایگذاری می‌کند.</small></div>
+        <div class="preview-empty" id="previewEmpty"><span class="empty-body"></span><b>اول عکس مشتری را اضافه کن</b><small>بعد لباس را انتخاب کن؛ پایتون آن را روی بدن جایگذاری می‌کند.</small></div>
         <div class="ai-loading" id="fitLoading" hidden><span class="spinner"></span><b>در حال اندازه‌گیری بدن و جایگذاری لباس...</b><small>پردازش کاملاً روی همین سیستم انجام می‌شود.</small></div>
         <img id="fitResult" alt="لباس جایگذاری شده روی بدن" hidden>
         <img id="compareOriginal" class="compare-original" alt="عکس اصلی" hidden>
@@ -155,12 +155,29 @@
         <div class="ultra-toolbar">
           <div>
             <b>Ultra Live Mirror</b>
-            <small>لباس: <strong id="ultraGarment">پیراهن سرمه‌ای</strong></small>
+            <small>لباس: <strong id="ultraGarment">Basic Tee 3D</strong></small>
           </div>
           <div class="ultra-stats">
             <span><b id="ultraFPS">—</b><small>Render</small></span>
             <span><b id="ultraPose">—</b><small>Pose</small></span>
             <span><b id="ultraYaw">—</b><small>Turn</small></span>
+          </div>
+        </div>
+
+        <div class="ultra-render-switch">
+          <div class="ultra-mode-buttons">
+            <button type="button" class="active" data-ultra-render-mode="rigged">3D Rigged</button>
+            <button type="button" data-ultra-render-mode="mesh2d">2D Fast</button>
+          </div>
+          <div class="rigged-model-buttons">
+            <button type="button" class="active"
+              data-rigged-model="/static/3d/garments/men/basictee/basictee_live.glb"
+              data-rigged-name="Basic Tee 3D"
+              data-sleeve-reach="0.74">T-Shirt 3D</button>
+            <button type="button"
+              data-rigged-model="/static/3d/garments/women/oxford/oxfordBlouse.glb"
+              data-rigged-name="Oxford Blouse 3D"
+              data-sleeve-reach="1.55">Blouse 3D</button>
           </div>
         </div>
 
@@ -172,7 +189,7 @@
           <div class="ultra-guide" id="ultraGuide">
             <span class="u-head"></span><span class="u-torso"></span>
             <span class="u-leg left"></span><span class="u-leg right"></span>
-            <small>تمام بدن را داخل کادر نگه دار</small>
+            <small>برای بالاتنه سر و هر دو شانه کافی است</small>
           </div>
 
           <div class="ultra-idle" id="ultraIdle">
@@ -266,7 +283,7 @@
             <span class="live-guide-head"></span>
             <span class="live-guide-torso"></span>
             <span class="live-guide-legs"></span>
-            <small>کمی عقب برو تا تمام بدن داخل کادر باشد</small>
+            <small>برای پیراهن لازم نیست بایستی؛ سر و شانه‌ها کافی است</small>
           </div>
           <div class="live-idle" id="liveIdle">
             <span>◉</span>
@@ -321,7 +338,7 @@
   <section class="examples-section">
     <div class="section-title"><span>نمونه روند کار</span><h2>کاربر دقیقاً می‌بیند باید چه‌کار کند</h2></div>
     <div class="example-flow">
-      <article><span class="flow-no">01</span><div class="flow-visual upload-demo"><span class="demo-person"></span></div><b>عکس تمام‌قد</b><small>از روبه‌رو و با نور مناسب</small></article>
+      <article><span class="flow-no">01</span><div class="flow-visual upload-demo"><span class="demo-person"></span></div><b>عکس مشتری</b><small>برای بالاتنه نیم‌تنه هم کافی است</small></article>
       <article><span class="flow-no">02</span><div class="flow-visual pick-demo"><img src="/static/samples/tee_olive.png" alt=""></div><b>انتخاب لباس</b><small>مثلاً تی‌شرت زیتونی</small></article>
       <article><span class="flow-no">03</span><div class="flow-visual result-demo"><span class="demo-person"></span><img src="/static/samples/tee_olive.png" alt=""></div><b>نمایش روی بدن</b><small>جایگذاری و تغییر شکل با پایتون</small></article>
     </div>
@@ -330,7 +347,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>window.TRY_POSHAK={localEngine:true};</script>
-<script src="/static/app.js?v=10" defer></script>
-<script src="/static/pro-live.bundle.js?v=1" defer></script>
+<script src="/static/app.js?v=12" defer></script>
+<script src="/static/pro-live.bundle.js?v=6" defer></script>
 </body>
 </html>

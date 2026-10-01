@@ -275,39 +275,76 @@ def _detect_pose(person: np.ndarray):
 
     if not result.pose_landmarks:
         raise LocalFitError(
-            "بدن در تصویر پیدا نشد. عکس تمام‌قد، مستقیم و با نور بهتر انتخاب کن."
+            "بدن در تصویر پیدا نشد. برای بالاتنه، سر و شانه‌ها را واضح داخل کادر نگه دار؛ برای شلوار، پایین‌تنه هم باید دیده شود."
         )
 
     lm = result.pose_landmarks.landmark
     h, w = person.shape[:2]
-    visibility_quality = _visibility(lm, [11, 12, 23, 24, 25, 26, 27, 28])
-    nose = _point(lm, 0, w, h)
-    ankle_y = max(_point(lm, 27, w, h)[1], _point(lm, 28, w, h)[1])
-    body_fraction = float(np.clip((ankle_y - nose[1]) / max(1.0, float(h)), 0.0, 1.0))
-    framing_quality = float(np.clip((body_fraction - 0.30) / 0.48, 0.0, 1.0))
-    quality = visibility_quality * 0.78 + framing_quality * 0.22
 
-    if visibility_quality < 0.36:
+    shoulder_visibility = _visibility(lm, [11, 12])
+    upper_visibility = _visibility(lm, [0, 11, 12, 13, 14, 15, 16])
+    hip_visibility = _visibility(lm, [23, 24])
+    lower_visibility = _visibility(lm, [23, 24, 25, 26, 27, 28])
+
+    if shoulder_visibility < 0.28:
         raise LocalFitError(
-            "نقاط بدن واضح نیستند. سر، شانه‌ها، کمر، زانو و پاها باید داخل کادر باشند."
+            "شانه‌ها واضح نیستند. برای بالاتنه کافی است سر و هر دو شانه داخل کادر باشند."
         )
+
+    nose = _point(lm, 0, w, h)
+    sl = _point(lm, 11, w, h)
+    sr = _point(lm, 12, w, h)
+    shoulder_mid = (sl + sr) * 0.5
+    shoulder_vec = sr - sl
+    shoulder_width = max(1.0, float(np.linalg.norm(shoulder_vec)))
+
+    if hip_visibility >= 0.22:
+        hl = _point(lm, 23, w, h)
+        hr = _point(lm, 24, w, h)
+    else:
+        # Upper-body / seated mode: infer a stable torso end from head +
+        # shoulders instead of forcing knees/feet into frame.
+        across = shoulder_vec / shoulder_width
+        down = shoulder_mid - nose
+        down_norm = max(1.0, float(np.linalg.norm(down)))
+        down = down / down_norm
+        if down[1] < 0.35:
+            down = np.array([0.0, 1.0], dtype=np.float32)
+        hip_mid = shoulder_mid + down * shoulder_width * 1.48
+        half_hip = shoulder_width * 0.40
+        hl = hip_mid - across * half_hip
+        hr = hip_mid + across * half_hip
+
+    quality = float(np.clip(upper_visibility, 0.0, 1.0))
 
     chains = [
         {
-            "shoulder": _point(lm, 11, w, h),
+            "shoulder": sl,
             "elbow": _point(lm, 13, w, h),
             "wrist": _point(lm, 15, w, h),
-            "hip": _point(lm, 23, w, h),
+            "hip": hl,
             "knee": _point(lm, 25, w, h),
             "ankle": _point(lm, 27, w, h),
+            "shoulder_visibility": float(lm[11].visibility),
+            "hip_visibility": float(lm[23].visibility),
+            "knee_visibility": float(lm[25].visibility),
+            "ankle_visibility": float(lm[27].visibility),
+            "upper_visibility": upper_visibility,
+            "lower_visibility": lower_visibility,
         },
         {
-            "shoulder": _point(lm, 12, w, h),
+            "shoulder": sr,
             "elbow": _point(lm, 14, w, h),
             "wrist": _point(lm, 16, w, h),
-            "hip": _point(lm, 24, w, h),
+            "hip": hr,
             "knee": _point(lm, 26, w, h),
             "ankle": _point(lm, 28, w, h),
+            "shoulder_visibility": float(lm[12].visibility),
+            "hip_visibility": float(lm[24].visibility),
+            "knee_visibility": float(lm[26].visibility),
+            "ankle_visibility": float(lm[28].visibility),
+            "upper_visibility": upper_visibility,
+            "lower_visibility": lower_visibility,
         },
     ]
     chains.sort(key=lambda c: float(c["shoulder"][0]))
@@ -979,6 +1016,8 @@ def fit_local(
     shoulder_width = float(np.linalg.norm(chains[1]["shoulder"] - chains[0]["shoulder"]))
 
     if category == "tops":
+        quality = float(np.mean([c["upper_visibility"] for c in chains]))
+
         sleeve_reach = _estimate_sleeve_reach(garment)
         src = _src_points_top(garment)
         dst = _dst_points_top(
@@ -991,6 +1030,12 @@ def fit_local(
         )
         overlay = _warp_top(garment, (h, w), src, dst)
     else:
+        lower_quality = float(np.mean([c["lower_visibility"] for c in chains]))
+        if lower_quality < 0.34:
+            raise LocalFitError(
+                "برای پرو شلوار، لگن و زانوها باید داخل کادر باشند. برای پیراهن لازم نیست تمام‌قد بایستی."
+            )
+        quality = lower_quality
         sleeve_reach = 0.25
         src = _src_points_bottom(garment)
         dst = _dst_points_bottom(chains, scale, width_scale, offset_x, offset_y)

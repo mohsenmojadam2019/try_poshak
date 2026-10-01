@@ -212,7 +212,7 @@
 
   async function runFit(auto = false) {
     if (!state.personFile) {
-      notify("اول عکس تمام‌قد را انتخاب کن.", "error");
+      notify("اول عکس مشتری را انتخاب کن.", "error");
       return;
     }
     if (state.busy && !auto) return;
@@ -271,11 +271,11 @@
         downloadButton.disabled = true;
         qualityValue.textContent = "—";
         qualityBar.style.width = "0";
-        processingInfo.textContent = "برای نتیجه بهتر عکس تمام‌قد و روبه‌رو بفرست.";
+        processingInfo.textContent = "برای پیراهن، سر و هر دو شانه واضح کافی است؛ برای شلوار لگن و زانوها هم دیده شوند.";
         previewEmpty.hidden = false;
         previewEmpty.querySelector("b").textContent = "عکس برای جایگذاری مناسب نیست";
         previewEmpty.querySelector("small").textContent =
-          error.message || "عکس تمام‌قد و روبه‌رو انتخاب کن.";
+          error.message || "برای پیراهن نیم‌تنه هم قابل قبول است؛ شانه‌ها باید واضح باشند.";
         notify(error.message || "خطا در پردازش محلی.", "error");
       }
     } finally {
@@ -481,8 +481,8 @@
         "تشخیص بدن " + quality + "٪ • پردازش " + speed + "ms";
     } catch (error) {
       if (state.liveRunning) {
-        liveStatusText.textContent = "بدن کامل داخل کادر نیست";
-        livePerformance.textContent = error.message || "کمی عقب برو و روبه‌روی دوربین بایست.";
+        liveStatusText.textContent = "نقاط لازم بدن واضح نیستند";
+        livePerformance.textContent = error.message || "برای پیراهن سر و هر دو شانه را واضح داخل کادر نگه دار.";
         liveBodyGuide.hidden = false;
       }
     } finally {
@@ -506,7 +506,7 @@
       await openCamera();
       await ensureLiveSession();
       processLiveFrame();
-      notify("Live Studio فعال شد؛ تمام بدن را داخل کادر نگه دار.");
+      notify("Live Studio فعال شد؛ برای پیراهن سر و هر دو شانه کافی است و لازم نیست بایستی.");
     } catch (error) {
       state.liveRunning = false;
       stopCameraTracks();
