@@ -521,10 +521,10 @@ def _dst_points_top(
     sw = max(20.0, float(np.linalg.norm(sr - sl)))
     torso_h = max(30.0, float(np.linalg.norm((hl + hr) / 2 - (sl + sr) / 2)))
 
-    s_l = sl + np.array([-0.10 * sw, -0.035 * torso_h], np.float32)
-    s_r = sr + np.array([0.10 * sw, -0.035 * torso_h], np.float32)
-    a_l = sl * 0.68 + hl * 0.32 + np.array([-0.08 * sw, 0], np.float32)
-    a_r = sr * 0.68 + hr * 0.32 + np.array([0.08 * sw, 0], np.float32)
+    s_l = sl + np.array([-0.14 * sw, -0.035 * torso_h], np.float32)
+    s_r = sr + np.array([0.14 * sw, -0.035 * torso_h], np.float32)
+    a_l = sl * 0.70 + hl * 0.30 + np.array([-0.13 * sw, 0], np.float32)
+    a_r = sr * 0.70 + hr * 0.30 + np.array([0.13 * sw, 0], np.float32)
 
     def outer_sleeve_point(chain: dict, desired_x: float) -> np.ndarray:
         point = _arm_point(chain, sleeve_reach)
@@ -537,12 +537,12 @@ def _dst_points_top(
             normal /= norm
             if normal[0] * desired_x < 0:
                 normal *= -1.0
-        return point + normal * (sw * 0.08)
+        return point + normal * (sw * 0.11)
 
     sleeve_l = outer_sleeve_point(left, -1.0)
     sleeve_r = outer_sleeve_point(right, 1.0)
-    bottom_l = hl + np.array([-0.08 * sw, 0.10 * torso_h], np.float32)
-    bottom_r = hr + np.array([0.08 * sw, 0.10 * torso_h], np.float32)
+    bottom_l = hl + np.array([-0.18 * sw, 0.10 * torso_h], np.float32)
+    bottom_r = hr + np.array([0.18 * sw, 0.10 * torso_h], np.float32)
 
     pts = np.array(
         [s_l, s_r, sleeve_l, sleeve_r, a_l, a_r, bottom_l, bottom_r],
@@ -648,14 +648,16 @@ def _dst_points_bottom(
 
     hip_w = max(20.0, float(np.linalg.norm(hr - hl)))
     leg_h = max(60.0, float(np.linalg.norm(((al + ar) / 2) - ((hl + hr) / 2))))
-    waist_l = hl + np.array([-0.14 * hip_w, -0.06 * leg_h], np.float32)
-    waist_r = hr + np.array([0.14 * hip_w, -0.06 * leg_h], np.float32)
-    crotch = (hl + hr) / 2 + np.array([0, 0.14 * leg_h], np.float32)
+    # Pose hip landmarks are joint centers, not the outer garment silhouette.
+    # Expand them to an estimated garment waist/leg envelope.
+    waist_l = hl + np.array([-0.42 * hip_w, -0.055 * leg_h], np.float32)
+    waist_r = hr + np.array([0.42 * hip_w, -0.055 * leg_h], np.float32)
+    crotch = (hl + hr) / 2 + np.array([0, 0.16 * leg_h], np.float32)
 
-    lk_o, lk_i = _side_pair(kl, hip_w * 0.34)
-    rk_i, rk_o = _side_pair(kr, hip_w * 0.34)
-    la_o, la_i = _side_pair(al, hip_w * 0.22)
-    ra_i, ra_o = _side_pair(ar, hip_w * 0.22)
+    lk_o, lk_i = _side_pair(kl, hip_w * 0.58)
+    rk_i, rk_o = _side_pair(kr, hip_w * 0.58)
+    la_o, la_i = _side_pair(al, hip_w * 0.38)
+    ra_i, ra_o = _side_pair(ar, hip_w * 0.38)
 
     pts = np.array(
         [waist_l, waist_r, crotch, lk_o, lk_i, rk_i, rk_o, la_o, la_i, ra_i, ra_o],
@@ -793,6 +795,119 @@ def _warp_top(
     )
     overlay = _merge_overlays(overlay, left_sleeve)
     overlay = _merge_overlays(overlay, right_sleeve)
+    return overlay
+
+
+def _augment_tps_points(
+    src: np.ndarray,
+    dst: np.ndarray,
+    category: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    src_extra: list[np.ndarray] = []
+    dst_extra: list[np.ndarray] = []
+
+    def add(a: int, b: int, t: float = 0.5) -> None:
+        src_extra.append(src[a] * (1.0 - t) + src[b] * t)
+        dst_extra.append(dst[a] * (1.0 - t) + dst[b] * t)
+
+    if category == "tops":
+        # Centerline and side anchors stabilize the shirt and stop the torso
+        # from collapsing into a single flat quadrilateral.
+        add(0, 1)
+        add(4, 5)
+        add(6, 7)
+        add(0, 6, 0.48)
+        add(1, 7, 0.48)
+        add(4, 6, 0.55)
+        add(5, 7, 0.55)
+    else:
+        # Add waist, crotch/leg and mid-leg anchors for smoother trousers.
+        add(0, 1)
+        add(3, 4)
+        add(5, 6)
+        add(7, 8)
+        add(9, 10)
+        add(0, 3, 0.52)
+        add(2, 4, 0.52)
+        add(2, 5, 0.52)
+        add(1, 6, 0.52)
+
+    if src_extra:
+        src = np.vstack([src, np.asarray(src_extra, np.float32)])
+        dst = np.vstack([dst, np.asarray(dst_extra, np.float32)])
+    return src.astype(np.float32), dst.astype(np.float32)
+
+
+def _warp_tps(
+    garment: np.ndarray,
+    dst_shape: tuple[int, int],
+    src_points: np.ndarray,
+    dst_points: np.ndarray,
+    *,
+    category: str,
+) -> np.ndarray:
+    if not hasattr(cv2, "createThinPlateSplineShapeTransformer"):
+        raise LocalFitError("OpenCV contrib برای Warp دقیق نصب نشده است.")
+
+    out_h, out_w = dst_shape
+    src_points, dst_points = _augment_tps_points(
+        src_points,
+        dst_points,
+        category,
+    )
+
+    matches = [cv2.DMatch(i, i, 0) for i in range(len(src_points))]
+    tps = cv2.createThinPlateSplineShapeTransformer(0.002)
+    # OpenCV TPS is used here as an inverse map: destination -> garment source.
+    tps.estimateTransformation(
+        dst_points.reshape(1, -1, 2),
+        src_points.reshape(1, -1, 2),
+        matches,
+    )
+
+    pad = 12
+    x0 = max(0, int(np.floor(dst_points[:, 0].min())) - pad)
+    x1 = min(out_w, int(np.ceil(dst_points[:, 0].max())) + pad + 1)
+    y0 = max(0, int(np.floor(dst_points[:, 1].min())) - pad)
+    y1 = min(out_h, int(np.ceil(dst_points[:, 1].max())) + pad + 1)
+    if x1 <= x0 or y1 <= y0:
+        return np.zeros((out_h, out_w, 4), np.uint8)
+
+    crop_w = x1 - x0
+    crop_h = y1 - y0
+    map_x = np.empty((crop_h, crop_w), np.float32)
+    map_y = np.empty((crop_h, crop_w), np.float32)
+
+    xs = np.arange(x0, x1, dtype=np.float32)
+    chunk = 40
+    for row0 in range(0, crop_h, chunk):
+        row1 = min(crop_h, row0 + chunk)
+        ys = np.arange(y0 + row0, y0 + row1, dtype=np.float32)
+        gx, gy = np.meshgrid(xs, ys)
+        query = np.stack([gx.ravel(), gy.ravel()], axis=1).reshape(1, -1, 2)
+        _, mapped = tps.applyTransformation(query)
+        mapped = mapped.reshape(row1 - row0, crop_w, 2)
+        map_x[row0:row1] = mapped[:, :, 0]
+        map_y[row0:row1] = mapped[:, :, 1]
+
+    warped_crop = cv2.remap(
+        garment,
+        map_x,
+        map_y,
+        cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0),
+    )
+
+    # Limit extrapolation outside the target garment envelope.
+    hull = cv2.convexHull(np.int32(np.round(dst_points)))
+    target_mask = np.zeros((out_h, out_w), np.uint8)
+    cv2.fillConvexPoly(target_mask, hull, 255, lineType=cv2.LINE_AA)
+    crop_mask = target_mask[y0:y1, x0:x1]
+    warped_crop[:, :, 3] = cv2.bitwise_and(warped_crop[:, :, 3], crop_mask)
+
+    overlay = np.zeros((out_h, out_w, 4), np.uint8)
+    overlay[y0:y1, x0:x1] = warped_crop
     return overlay
 
 
@@ -989,19 +1104,24 @@ def fit_local(
             offset_y,
             sleeve_reach=sleeve_reach,
         )
-        overlay = _warp_top(garment, (h, w), src, dst)
+        overlay = _warp_tps(
+            garment,
+            (h, w),
+            src,
+            dst,
+            category="tops",
+        )
     else:
         sleeve_reach = 0.25
         src = _src_points_bottom(garment)
         dst = _dst_points_bottom(chains, scale, width_scale, offset_x, offset_y)
-        triangles = [
-            (0, 1, 2),
-            (0, 2, 3), (2, 4, 3),
-            (3, 4, 7), (4, 8, 7),
-            (2, 1, 6), (2, 6, 5),
-            (5, 6, 9), (6, 10, 9),
-        ]
-        overlay = _warp_piecewise(garment, (h, w), src, dst, triangles)
+        overlay = _warp_tps(
+            garment,
+            (h, w),
+            src,
+            dst,
+            category="bottoms",
+        )
     overlay = _clip_to_body(overlay, segmentation, shoulder_width)
     overlay = _feather_overlay(overlay, shoulder_width)
     overlay = _apply_local_lighting(overlay, person)
