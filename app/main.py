@@ -1,21 +1,22 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config import settings
-from app.services.fashn import FashnClient, FashnError
-from app.services.images import ImageValidationError, normalize_image, to_data_uri
+from app.services.local_fit import LocalFitError, fit_local
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
+    version="1.0.0",
     docs_url="/api/docs",
     redoc_url=None,
 )
@@ -23,15 +24,7 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-fashn = FashnClient(
-    api_key=settings.fashn_api_key,
-    base_url=settings.fashn_base_url,
-    model=settings.fashn_model,
-    timeout_seconds=settings.request_timeout_seconds,
-)
-
-VALID_CATEGORIES = {"tops", "bottoms", "one-pieces"}
-VALID_MODES = {"performance", "balanced", "quality"}
+VALID_CATEGORIES = {"tops", "bottoms"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -40,8 +33,8 @@ async def home(request: Request) -> HTMLResponse:
         "index.html",
         {
             "request": request,
-            "provider_ready": fashn.configured,
-            "model_name": settings.fashn_model,
+            "engine_ready": True,
+            "engine_name": "Python + OpenCV",
         },
     )
 
@@ -50,58 +43,87 @@ async def home(request: Request) -> HTMLResponse:
 async def health() -> dict[str, object]:
     return {
         "status": "ok",
-        "provider": "fashn",
-        "provider_ready": fashn.configured,
-        "model": settings.fashn_model,
+        "engine": "local-python-cv",
+        "engine_ready": True,
+        "external_api": False,
     }
 
 
-@app.post("/api/try-on")
-async def try_on(
+async def _fit_request(
+    person_image: UploadFile,
+    garment_image: UploadFile,
+    category: str,
+    scale: float,
+    width_scale: float,
+    offset_y: float,
+) -> dict[str, object]:
+    if category not in VALID_CATEGORIES:
+        raise HTTPException(status_code=422, detail="نوع لباس باید بالاتنه یا پایین‌تنه باشد.")
+
+    max_upload_bytes = settings.max_upload_mb * 1024 * 1024
+    person_raw = await person_image.read(max_upload_bytes + 1)
+    garment_raw = await garment_image.read(max_upload_bytes + 1)
+
+    try:
+        result = await run_in_threadpool(
+            fit_local,
+            person_raw,
+            garment_raw,
+            category=category,
+            max_upload_bytes=max_upload_bytes,
+            max_side=settings.max_image_side,
+            scale=scale,
+            width_scale=width_scale,
+            offset_y=offset_y,
+        )
+    except LocalFitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="پردازش محلی لباس ناموفق بود.") from exc
+
+    encoded = base64.b64encode(result.image_bytes).decode("ascii")
+    return {
+        "status": "completed",
+        "image": f"data:image/jpeg;base64,{encoded}",
+        "engine": "python-opencv-mediapipe",
+        "category": result.category,
+        "pose_quality": round(result.pose_quality, 3),
+    }
+
+
+@app.post("/api/fit-local")
+async def fit_local_endpoint(
     person_image: UploadFile = File(...),
     garment_image: UploadFile = File(...),
     category: str = Form("tops"),
-    mode: str = Form("balanced"),
-) -> dict[str, str]:
-    if category not in VALID_CATEGORIES:
-        raise HTTPException(status_code=422, detail="نوع لباس نامعتبر است.")
-    if mode not in VALID_MODES:
-        raise HTTPException(status_code=422, detail="حالت پردازش نامعتبر است.")
+    scale: float = Form(1.0),
+    width_scale: float = Form(1.0),
+    offset_y: float = Form(0.0),
+) -> dict[str, object]:
+    return await _fit_request(
+        person_image,
+        garment_image,
+        category,
+        scale,
+        width_scale,
+        offset_y,
+    )
 
-    max_upload_bytes = settings.max_upload_mb * 1024 * 1024
 
-    try:
-        person_raw = await person_image.read(max_upload_bytes + 1)
-        garment_raw = await garment_image.read(max_upload_bytes + 1)
-
-        person_jpeg = normalize_image(
-            person_raw,
-            max_upload_bytes=max_upload_bytes,
-            max_side=settings.max_image_side,
-        )
-        garment_jpeg = normalize_image(
-            garment_raw,
-            max_upload_bytes=max_upload_bytes,
-            max_side=settings.max_image_side,
-        )
-
-        result = await fashn.run_try_on(
-            person_image=to_data_uri(person_jpeg),
-            garment_image=to_data_uri(garment_jpeg),
-            category=category,
-            mode=mode,
-        )
-
-        return {
-            "status": "completed",
-            "image": result.image,
-            "prediction_id": result.prediction_id,
-            "provider": "fashn",
-            "model": result.model,
-        }
-
-    except ImageValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except FashnError as exc:
-        status_code = 503 if not fashn.configured else 502
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+@app.post("/api/try-on")
+async def try_on_compat(
+    person_image: UploadFile = File(...),
+    garment_image: UploadFile = File(...),
+    category: str = Form("tops"),
+    scale: float = Form(1.0),
+    width_scale: float = Form(1.0),
+    offset_y: float = Form(0.0),
+) -> dict[str, object]:
+    return await _fit_request(
+        person_image,
+        garment_image,
+        category,
+        scale,
+        width_scale,
+        offset_y,
+    )

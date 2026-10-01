@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef1f4">
   <title>پرو مجازی لباس | Try Poshak</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2">
+  <link rel="stylesheet" href="/static/styles.css?v=4">
 </head>
 <body>
 <header class="topbar">
   <a class="brand" href="/">
     <span class="brand-mark">TP</span>
-    <span><strong>Try Poshak</strong><small>AI Virtual Fitting Room</small></span>
+    <span><strong>Try Poshak</strong><small>Local Python Fitting Room</small></span>
   </a>
-  <div class="server-pill {{ 'ready' if provider_ready else 'demo' }}">
+  <div class="server-pill ready">
     <span class="status-dot"></span>
-    {% if provider_ready %}پرو واقعی AI آماده است{% else %}حالت دمو — API Key تنظیم نشده{% endif %}
+    موتور محلی پایتون آماده است
   </div>
 </header>
 
@@ -24,12 +24,12 @@
     <div>
       <span class="eyebrow">پرو مجازی لباس با عکس تمام‌قد</span>
       <h1>عکس خودت را بفرست، لباس را انتخاب کن، همان لحظه ببین.</h1>
-      <p>اول یک عکس تمام‌قد و روبه‌رو انتخاب کن. بعد از بین پیراهن‌ها یا شلوارهای آماده یکی را بزن؛ پیش‌نمایش فوری روی عکس قرار می‌گیرد و وقتی موتور AI فعال باشد، پرو واقعی هم خودکار ساخته می‌شود.</p>
+      <p>اول یک عکس تمام‌قد و روبه‌رو انتخاب کن. بعد پیراهن یا شلوار را بزن؛ موتور محلی پایتون نقاط بدن را پیدا می‌کند، لباس را تغییر شکل می‌دهد و مستقیم روی بدن می‌نشاند. هیچ API خارجی و سرویس مولد تصویر استفاده نمی‌شود.</p>
     </div>
     <div class="hero-steps">
       <div><b>۱</b><span>عکس تمام‌قد</span></div><i></i>
       <div><b>۲</b><span>انتخاب لباس</span></div><i></i>
-      <div><b>۳</b><span>پرو خودکار</span></div>
+      <div><b>۳</b><span>جایگذاری پایتون</span></div>
     </div>
   </section>
 
@@ -102,27 +102,28 @@
 
     <article class="card preview-card">
       <div class="card-head">
-        <div><span class="step">۳</span><div><h2>پیش‌نمایش روی بدن</h2><p>جایگذاری فوری + پرو واقعی AI</p></div></div>
+        <div><span class="step">۳</span><div><h2>لباس روی بدن</h2><p>پردازش محلی با Python + OpenCV</p></div></div>
         <span class="badge soft" id="selectedLabel">پیراهن سرمه‌ای</span>
       </div>
 
       <div class="preview-stage" id="previewStage">
-        <canvas id="previewCanvas"></canvas>
-        <div class="preview-empty" id="previewEmpty"><span class="empty-body"></span><b>اول عکس تمام‌قد را اضافه کن</b><small>بعد با یک کلیک روی هر لباس، روی عکس قرار می‌گیرد.</small></div>
-        <div class="ai-loading" id="aiLoading" hidden><span class="spinner"></span><b>در حال ساخت پرو واقعی...</b><small>چند ثانیه صبر کن</small></div>
-        <img id="aiResult" alt="نتیجه پرو هوشمند" hidden>
+        <div class="preview-empty" id="previewEmpty"><span class="empty-body"></span><b>اول عکس تمام‌قد را اضافه کن</b><small>بعد لباس را انتخاب کن؛ پایتون آن را روی بدن جایگذاری می‌کند.</small></div>
+        <div class="ai-loading" id="fitLoading" hidden><span class="spinner"></span><b>در حال اندازه‌گیری بدن و جایگذاری لباس...</b><small>پردازش کاملاً روی همین سیستم انجام می‌شود.</small></div>
+        <img id="fitResult" alt="لباس جایگذاری شده روی بدن" hidden>
       </div>
 
       <div class="fit-controls">
-        <div><label for="scaleRange">اندازه لباس</label><input id="scaleRange" type="range" min="70" max="135" value="100"></div>
-        <div><label for="yRange">جای لباس</label><input id="yRange" type="range" min="-25" max="25" value="0"></div>
+        <div><label for="scaleRange">قد و اندازه لباس</label><input id="scaleRange" type="range" min="70" max="135" value="100"></div>
+        <div><label for="widthRange">پهنای لباس</label><input id="widthRange" type="range" min="72" max="145" value="100"></div>
+        <div><label for="yRange">بالا / پایین</label><input id="yRange" type="range" min="-25" max="25" value="0"></div>
       </div>
 
       <div class="action-row">
-        <button id="aiButton" class="primary-btn" type="button"><span>پرو واقعی با AI</span><b>✦</b></button>
+        <button id="fitButton" class="primary-btn" type="button"><span>جایگذاری با پایتون</span><b>⌁</b></button>
+        <button id="downloadButton" class="download-btn" type="button" disabled>دانلود</button>
         <button id="resetFit" class="icon-btn" type="button">↻</button>
       </div>
-      <p class="auto-hint" id="autoHint">{% if provider_ready %}بعد از انتخاب عکس و لباس، پرو واقعی به‌صورت خودکار شروع می‌شود.{% else %}فعلاً پیش‌نمایش فوری فعال است؛ برای پرو واقعی FASHN_API_KEY را تنظیم کن.{% endif %}</p>
+      <p class="auto-hint" id="autoHint">بعد از انتخاب عکس و لباس، جایگذاری به‌صورت خودکار انجام می‌شود. اسلایدرها هم نتیجه را دوباره با پایتون تنظیم می‌کنند.</p>
     </article>
   </section>
 
@@ -131,13 +132,13 @@
     <div class="example-flow">
       <article><span class="flow-no">01</span><div class="flow-visual upload-demo"><span class="demo-person"></span></div><b>عکس تمام‌قد</b><small>از روبه‌رو و با نور مناسب</small></article>
       <article><span class="flow-no">02</span><div class="flow-visual pick-demo"><img src="/static/samples/tee_olive.png" alt=""></div><b>انتخاب لباس</b><small>مثلاً تی‌شرت زیتونی</small></article>
-      <article><span class="flow-no">03</span><div class="flow-visual result-demo"><span class="demo-person"></span><img src="/static/samples/tee_olive.png" alt=""></div><b>نمایش روی بدن</b><small>اول جایگذاری فوری، بعد AI</small></article>
+      <article><span class="flow-no">03</span><div class="flow-visual result-demo"><span class="demo-person"></span><img src="/static/samples/tee_olive.png" alt=""></div><b>نمایش روی بدن</b><small>جایگذاری و تغییر شکل با پایتون</small></article>
     </div>
   </section>
 </main>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script>window.TRY_POSHAK={providerReady:{{ 'true' if provider_ready else 'false' }}};</script>
-<script src="/static/app.js?v=2" defer></script>
+<script>window.TRY_POSHAK={localEngine:true};</script>
+<script src="/static/app.js?v=4" defer></script>
 </body>
 </html>
