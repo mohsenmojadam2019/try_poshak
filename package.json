@@ -1,0 +1,31 @@
+{
+  "name": "try_poshak",
+  "version": "1.0.0",
+  "description": "این پروژه لباس را بدون API خارجی و بدون مدل مولد تصویر روی عکس کاربر جایگذاری می‌کند.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:ultra": "esbuild web/pro-live.js --bundle --format=iife --global-name=TryPoshakUltra --target=es2020 --minify --outfile=static/pro-live.bundle.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohsenmojadam2019/try_poshak.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mohsenmojadam2019/try_poshak/issues"
+  },
+  "homepage": "https://github.com/mohsenmojadam2019/try_poshak#readme",
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^1.0.1",
+    "three": "^0.180.0"
+  }
+}

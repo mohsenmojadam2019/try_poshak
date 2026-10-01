@@ -1,85 +1,87 @@
-# Try Poshak — Local Python Virtual Fitting
+# Try Poshak — Local Virtual Fitting
 
-این پروژه لباس را بدون API خارجی و بدون مدل مولد تصویر روی عکس کاربر جایگذاری می‌کند.
+Try Poshak یک موتور پرو مجازی **بدون API خارجی و بدون Generative AI** است. پروژه دو موتور مکمل دارد:
 
-## روش کار
+- **Ultra Live Mirror**: رهگیری بدن و Render لباس روی خود مرورگر با MediaPipe Tasks Vision + Three.js/WebGL؛ بدون ارسال هر فریم دوربین به سرور.
+- **Python HQ Fit**: پردازش تک‌فریم با Python + OpenCV + MediaPipe برای جایگذاری دقیق‌تر و خروجی قابل دانلود.
 
-1. کاربر عکس تمام‌قد و روبه‌رو می‌فرستد.
-2. موتور محلی نقاط شانه، کمر، زانو و مچ پا را روی همان سیستم پیدا می‌کند.
-3. تصویر لباس از پس‌زمینه جدا می‌شود.
-4. با OpenCV و تبدیل‌های هندسی، بالاتنه یا شلوار متناسب با فرم و زاویه بدن Warp می‌شود.
-5. طول آستین از شکل خود لباس تخمین زده می‌شود و دست/سر دوباره روی لباس لایه‌بندی می‌شوند.
-6. نور محلی عکس روی لباس اعمال می‌شود و لبه‌ها Feather می‌شوند تا خروجی کمتر تخت به نظر برسد.
-7. نتیجه‌های تکراری با کش محدود برای عکس شخص و لباس سریع‌تر پردازش می‌شوند.
-8. کاربر می‌تواند قد، پهنا، چپ/راست و بالا/پایین لباس را Fine-tune کند.
-9. نتیجه به‌صورت JPEG در همان درخواست برمی‌گردد؛ تصویر به سرویس خارجی ارسال نمی‌شود.
+## Ultra Live Mirror
 
-این سیستم Generative AI نیست. برای تشخیص خودکار نقاط بدن از MediaPipe به‌صورت کاملاً محلی استفاده می‌شود. خود جایگذاری، تغییر شکل، ماسک، لایه‌بندی و خروجی با Python/OpenCV انجام می‌شود.
+مسیر Live جدید برای حس آینه واقعی طراحی شده است:
 
-## نصب
+1. Camera با `getUserMedia` باز می‌شود.
+2. Pose Landmarker به‌صورت local/WASM روی مرورگر اجرا می‌شود و 33 landmark و world landmark بدن را می‌دهد.
+3. عکس محصول یک بار در `POST /api/garment/prepare` به PNG شفاف و metadata لباس تبدیل می‌شود.
+4. Three.js چند mesh پویا برای torso، آستین‌ها، کمر و پاها Render می‌کند.
+5. لباس بر اساس شانه، لگن، آرنج، مچ، زانو و مچ پا deform می‌شود.
+6. زاویه چرخش بدن از world landmarks روی shading و perspective mesh اثر می‌گذارد.
+7. یک فیزیک سبک spring/inertia باعث حرکت نرم‌تر پارچه هنگام جابه‌جایی بدن می‌شود.
+8. Occlusion canvas سر، دست و بازوهای واقعی را دوباره جلوی لباس می‌گذارد.
+9. Adaptive smoothing لرزش landmarkها را کم می‌کند.
+10. انتخاب پیراهن/شلوار یا آپلود محصول در بخش اصلی، Ultra Live را بدون reload به همان لباس تغییر می‌دهد.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install --no-deps mediapipe==0.10.14
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
+مدل browser pose و فایل‌های WASM داخل `static/` نگهداری می‌شوند؛ در زمان اجرا dependency اینترنتی نداریم.
 
-سپس:
+### اجرای Ultra Live
 
-```
-http://127.0.0.1:8000
-```
+    npm ci
+    npm run build:ultra
 
-## Live Studio
+سپس Backend:
 
-بخش Live Studio با دوربین موبایل یا لپ‌تاپ کار می‌کند:
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    pip install --no-deps mediapipe==0.10.14
+    uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-- دوربین با `getUserMedia` در مرورگر باز می‌شود.
-- لباس یک‌بار در `POST /api/live/session` برای یک جلسه کوتاه‌مدت ثبت می‌شود.
-- فریم‌های دوربین با JPEG فشرده به `POST /api/live/frame` ارسال می‌شوند.
-- موتور Python/OpenCV/MediaPipe نتیجه را برمی‌گرداند و صفحه بدون Refresh آن را جایگزین می‌کند.
-- دکمه تعویض دوربین برای دوربین جلو/عقب موبایل وجود دارد.
-- انتخاب لباس در بخش اصلی، Live Studio را هم خودکار به همان لباس تغییر می‌دهد.
-- برای دوربین زنده مرورگر Secure Context لازم است: `localhost` روی همان دستگاه یا `HTTPS` برای موبایل/شبکه.
+روی همان کامپیوتر: `http://127.0.0.1:8000`
 
-این حالت استریم ویدئویی سمت سرویس خارجی نیست؛ فریم‌ها فقط به همین Backend پایتون فرستاده می‌شوند.
+برای دوربین موبایل، صفحه باید از **HTTPS** باز شود؛ `getUserMedia` روی IP معمولی HTTP مجاز نیست.
+
+## Python HQ Fit
+
+موتور Python برای عکس ثابت: تشخیص بدن، حذف پس‌زمینه لباس، Warp هندسی، تخمین طول آستین، occlusion سر/دست، نور محلی، feathering و cache چندمرحله‌ای.
+
+## Legacy Python Live Studio
+
+- `POST /api/live/session`: ثبت لباس یک‌بار برای session.
+- `POST /api/live/frame`: ارسال JPEG دوربین و پردازش سمت Python.
+- مناسب fallback و مقایسه؛ Ultra Live برای latency پایین‌تر طراحی شده است.
 
 ## API
 
-`POST /api/fit-local`
+### `POST /api/garment/prepare`
 
-Multipart fields:
+ورودی `garment_image`؛ خروجی PNG شفاف لباس، عرض/ارتفاع، `sleeve_reach` و `alpha_coverage`.
 
-- `person_image`: عکس تمام‌قد
-- `garment_image`: عکس پیراهن یا شلوار
-- `category`: `tops` یا `bottoms`
-- `scale`: ضریب قد/اندازه، پیش‌فرض 1
-- `width_scale`: ضریب پهنا، پیش‌فرض 1
-- `offset_x`: جابه‌جایی افقی، پیش‌فرض 0
-- `offset_y`: جابه‌جایی عمودی، پیش‌فرض 0
+### `POST /api/fit-local`
 
-## نکات عکس مشتری
+ورودی‌ها: `person_image`, `garment_image`, `category`, `scale`, `width_scale`, `offset_x`, `offset_y`.
 
-- تمام بدن از سر تا کف پا داخل تصویر باشد.
-- کاربر روبه‌روی دوربین بایستد.
-- دست‌ها بدن را نپوشانند.
-- نور یکنواخت باشد.
-- برای بهترین نتیجه، لباس پایه ساده و نسبتاً جذب باشد؛ روش کلاسیک پردازش تصویر نمی‌تواند بخش‌هایی از بدن را که زیر لباس حجیم پنهان شده‌اند بازسازی کند.
+## نکات ورودی
 
-## نکات عکس محصول
+- عکس شخص: تمام بدن از سر تا کف پا، روبه‌رو، نور یکنواخت.
+- عکس محصول: روبه‌رو، پس‌زمینه سفید/ساده/شفاف؛ Flat-lay یا ghost mannequin بهتر است.
 
-- لباس از روبه‌رو باشد.
-- پس‌زمینه سفید، ساده یا شفاف بهتر است.
-- تصویر محصول تا حد امکان صاف و بدون مدل باشد.
+## محدودیت فنی
 
-## تست
+Ultra Live یک renderer مبتنی بر body tracking و mesh deformation است و تصویر جدید از هیچ تولید نمی‌کند. بنابراین هندسه‌ای که در عکس محصول دیده نمی‌شود را بازسازی نمی‌کند. برای realism بالاتر، مسیر بعدی GLB rigged garment و mesh سه‌بعدی واقعی است؛ معماری Ultra Live برای این توسعه آماده شده است.
 
-```bash
-pytest -q
-```
+## تست و Build
+
+    pytest -q
+    npm ci
+    npm run build:ultra
+    node --check static/app.js
 
 ## Docker
 
-Dockerfile نصب MediaPipe را بدون وابستگی‌های غیرضروری انجام می‌دهد تا موتور فقط با وابستگی‌های موردنیاز این پروژه اجرا شود.
+Bundle مرورگر در `static/pro-live.bundle.js` قرار دارد؛ با تغییر `web/pro-live.js` دوباره `npm run build:ultra` اجرا شود.
+
+## Third-party
+
+- MediaPipe Tasks Vision — Apache-2.0
+- Three.js — MIT
+
+جزئیات در `THIRD_PARTY_NOTICES.md`.

@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef1f4">
   <title>پرو مجازی لباس | Try Poshak</title>
-  <link rel="stylesheet" href="/static/styles.css?v=9">
+  <link rel="stylesheet" href="/static/styles.css?v=10">
+  <link rel="stylesheet" href="/static/pro-live.css?v=1">
 </head>
 <body>
 <header class="topbar">
@@ -137,6 +138,107 @@
     </article>
   </section>
 
+  <section class="ultra-section" id="ultraStudio">
+    <div class="ultra-head">
+      <div>
+        <span class="eyebrow">Ultra Live / Browser-Native VTO</span>
+        <h2>پرو زنده واقعی؛ بدون ارسال هر فریم به سرور.</h2>
+        <p>Body Tracking روی خود مرورگر اجرا می‌شود، لباس با WebGL روی بدن Warp می‌شود، حرکت پارچه Physics دارد و دست/سر دوباره جلوی لباس قرار می‌گیرند. هدف این حالت حس آینه زنده است، نه عکس‌های پشت‌سرهم.</p>
+      </div>
+      <div class="ultra-badges">
+        <span>MediaPipe Local</span><span>WebGL</span><span>Cloth Physics</span><span>Occlusion</span>
+      </div>
+    </div>
+
+    <div class="ultra-grid">
+      <article class="ultra-camera-card">
+        <div class="ultra-toolbar">
+          <div>
+            <b>Ultra Live Mirror</b>
+            <small>لباس: <strong id="ultraGarment">پیراهن سرمه‌ای</strong></small>
+          </div>
+          <div class="ultra-stats">
+            <span><b id="ultraFPS">—</b><small>Render</small></span>
+            <span><b id="ultraPose">—</b><small>Pose</small></span>
+            <span><b id="ultraYaw">—</b><small>Turn</small></span>
+          </div>
+        </div>
+
+        <div class="ultra-stage" id="ultraStage">
+          <video id="ultraVideo" autoplay playsinline muted></video>
+          <div id="ultraWebgl" class="ultra-webgl"></div>
+          <canvas id="ultraOcclusion" class="ultra-occlusion"></canvas>
+
+          <div class="ultra-guide" id="ultraGuide">
+            <span class="u-head"></span><span class="u-torso"></span>
+            <span class="u-leg left"></span><span class="u-leg right"></span>
+            <small>تمام بدن را داخل کادر نگه دار</small>
+          </div>
+
+          <div class="ultra-idle" id="ultraIdle">
+            <span class="ultra-orbit">◎</span>
+            <b>Ultra Live آماده است</b>
+            <small>دوربین را روشن کن؛ مدل رهگیری بدن روی همین مرورگر اجرا می‌شود.</small>
+          </div>
+
+          <div class="ultra-loading" id="ultraLoading" hidden>
+            <span class="spinner"></span>
+            <b>در حال آماده‌سازی موتور زنده...</b>
+            <small>Body Tracker + WebGL Renderer</small>
+          </div>
+        </div>
+
+        <div class="ultra-controls">
+          <button id="ultraStart" class="ultra-primary" type="button">شروع Ultra Live</button>
+          <button id="ultraSwitch" type="button" disabled>تعویض دوربین</button>
+          <button id="ultraSnapshot" type="button" disabled>عکس</button>
+          <button id="ultraStop" type="button" disabled>توقف</button>
+        </div>
+
+        <div class="ultra-tuning">
+          <label><span>حرکت پارچه</span><input id="ultraPhysics" type="range" min="0" max="100" value="58"></label>
+          <div class="ultra-engine">
+            <span class="engine-dot"></span>
+            <div><b id="ultraMode">آماده شروع</b><small id="ultraEngine">MediaPipe + WebGL</small></div>
+          </div>
+        </div>
+      </article>
+
+      <aside class="ultra-info-card">
+        <span class="ultra-kicker">چرا این حالت زنده‌تر است؟</span>
+        <h3>به‌جای JPEG پشت‌سرهم، لباس با خود حرکت بدن Render می‌شود.</h3>
+
+        <div class="ultra-pipeline">
+          <div><b>01</b><span>Camera</span><small>فریم خام روی دستگاه</small></div>
+          <i></i>
+          <div><b>02</b><span>Pose</span><small>۳۳ نقطه بدن</small></div>
+          <i></i>
+          <div><b>03</b><span>Garment Mesh</span><small>Warp + Turn</small></div>
+          <i></i>
+          <div><b>04</b><span>Occlusion</span><small>دست و سر جلو</small></div>
+        </div>
+
+        <div class="ultra-demo">
+          <div class="demo-screen">
+            <span class="demo-live-dot"></span>
+            <span class="demo-human"></span>
+            <img src="/static/samples/shirt_navy.png" alt="">
+            <span class="demo-motion m1"></span><span class="demo-motion m2"></span>
+          </div>
+          <div>
+            <b>نمونه Mirror Mode</b>
+            <small>وقتی شانه، دست یا زاویه بدن تغییر کند، Mesh لباس همان لحظه همراه بدن حرکت می‌کند.</small>
+          </div>
+        </div>
+
+        <div class="ultra-research-note">
+          <b>Hybrid Engine</b>
+          <p>Ultra Live برای سرعت روی مرورگر اجرا می‌شود؛ حالت Python پایین صفحه همچنان برای خروجی دقیق‌تر یک فریم باقی مانده است.</p>
+        </div>
+      </aside>
+    </div>
+  </section>
+
   <section class="live-section" id="liveStudio">
     <div class="live-section-head">
       <div>
@@ -228,6 +330,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>window.TRY_POSHAK={localEngine:true};</script>
-<script src="/static/app.js?v=9" defer></script>
+<script src="/static/app.js?v=10" defer></script>
+<script src="/static/pro-live.bundle.js?v=1" defer></script>
 </body>
 </html>

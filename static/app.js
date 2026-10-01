@@ -83,6 +83,17 @@
     return true;
   }
 
+  function emitGarmentChange() {
+    window.dispatchEvent(new CustomEvent("tryposhak:garmentchange", {
+      detail: {
+        name: state.garmentName,
+        category: state.category,
+        src: state.garmentSrc,
+        file: state.garmentFile,
+      },
+    }));
+  }
+
   function setCategory(category) {
     const changed = state.category !== category;
     state.category = category;
@@ -133,6 +144,7 @@
     customSelected.hidden = true;
     garmentInput.value = "";
     resetControls(false);
+    emitGarmentChange();
     scheduleFit(80);
   }
 
@@ -153,6 +165,7 @@
     document.querySelectorAll(".product-card").forEach((x) => x.classList.remove("active"));
 
     resetControls(false);
+    emitGarmentChange();
     notify("لباس شخصی انتخاب شد؛ اگر لازم است نوع بالاتنه/پایین‌تنه را اصلاح کن.");
     scheduleFit(120);
   }
@@ -573,6 +586,7 @@
   document.querySelectorAll(".category-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       setCategory(btn.dataset.category);
+      emitGarmentChange();
       scheduleFit(120);
     });
   });

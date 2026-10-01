@@ -26,6 +26,15 @@ class LocalFitResult:
     result_cache_hit: bool
 
 
+@dataclass
+class PreparedGarmentResult:
+    png_bytes: bytes
+    width: int
+    height: int
+    sleeve_reach: float
+    alpha_coverage: float
+
+
 _POSE_LOCK = threading.Lock()
 _CACHE_LOCK = threading.Lock()
 _PERSON_CACHE: OrderedDict[str, tuple[np.ndarray, list[dict], np.ndarray | None, float]] = OrderedDict()
@@ -453,6 +462,38 @@ def _estimate_sleeve_reach(garment: np.ndarray) -> float:
             [0.28, 0.42, 0.62, 0.82, 0.96],
             [0.52, 0.78, 1.12, 1.58, 1.90],
         )
+    )
+
+
+def prepare_garment_asset(
+    raw: bytes,
+    *,
+    max_upload_bytes: int,
+    max_side: int,
+) -> PreparedGarmentResult:
+    garment, _ = _prepare_garment(
+        raw,
+        max_upload_bytes=max_upload_bytes,
+        max_side=max_side,
+    )
+    sleeve_reach = _estimate_sleeve_reach(garment)
+    alpha = garment[:, :, 3]
+    coverage = float(np.count_nonzero(alpha > 24) / max(1, alpha.size))
+
+    ok, encoded = cv2.imencode(
+        ".png",
+        garment,
+        [int(cv2.IMWRITE_PNG_COMPRESSION), 6],
+    )
+    if not ok:
+        raise LocalFitError("آماده‌سازی تصویر لباس ناموفق بود.")
+
+    return PreparedGarmentResult(
+        png_bytes=encoded.tobytes(),
+        width=int(garment.shape[1]),
+        height=int(garment.shape[0]),
+        sleeve_reach=sleeve_reach,
+        alpha_coverage=coverage,
     )
 
 

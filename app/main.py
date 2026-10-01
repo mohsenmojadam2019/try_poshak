@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config import settings
-from app.services.local_fit import LocalFitError, fit_local
+from app.services.local_fit import LocalFitError, fit_local, prepare_garment_asset
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -184,6 +184,36 @@ async def _fit_request(
         offset_x=offset_x,
         offset_y=offset_y,
     )
+
+
+@app.post("/api/garment/prepare")
+async def prepare_garment(
+    garment_image: UploadFile = File(...),
+) -> dict[str, object]:
+    max_upload_bytes = settings.max_upload_mb * 1024 * 1024
+    raw = await garment_image.read(max_upload_bytes + 1)
+    if len(raw) > max_upload_bytes:
+        raise HTTPException(status_code=413, detail="حجم تصویر لباس بیشتر از حد مجاز است.")
+
+    try:
+        prepared = await run_in_threadpool(
+            prepare_garment_asset,
+            raw,
+            max_upload_bytes=max_upload_bytes,
+            max_side=settings.max_image_side,
+        )
+    except LocalFitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    encoded = base64.b64encode(prepared.png_bytes).decode("ascii")
+    return {
+        "status": "ready",
+        "image": f"data:image/png;base64,{encoded}",
+        "width": prepared.width,
+        "height": prepared.height,
+        "sleeve_reach": round(prepared.sleeve_reach, 3),
+        "alpha_coverage": round(prepared.alpha_coverage, 4),
+    }
 
 
 @app.post("/api/fit-local")
