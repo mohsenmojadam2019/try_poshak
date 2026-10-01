@@ -8,7 +8,8 @@
     category: "tops",
     busy: false,
     timer: null,
-    requestId: 0
+    requestId: 0,
+    personUrl: null
   };
 
   const personInput = $("personInput");
@@ -23,10 +24,16 @@
   const previewEmpty = $("previewEmpty");
   const fitLoading = $("fitLoading");
   const fitResult = $("fitResult");
+  const compareOriginal = $("compareOriginal");
   const fitButton = $("fitButton");
+  const compareButton = $("compareButton");
+  const qualityValue = $("qualityValue");
+  const qualityBar = $("qualityBar");
+  const processingInfo = $("processingInfo");
   const downloadButton = $("downloadButton");
   const scaleRange = $("scaleRange");
   const widthRange = $("widthRange");
+  const xRange = $("xRange");
   const yRange = $("yRange");
   const toast = $("toast");
 
@@ -62,16 +69,23 @@
     if (!validImage(file)) return;
     state.personFile = file;
 
+    if (state.personUrl) URL.revokeObjectURL(state.personUrl);
     const url = URL.createObjectURL(file);
-    personPreview.onload = () => URL.revokeObjectURL(url);
+    state.personUrl = url;
     personPreview.src = url;
+    compareOriginal.src = url;
     personPreview.hidden = false;
     personEmpty.hidden = true;
     poseGuide.style.opacity = ".22";
 
     previewEmpty.hidden = true;
     fitResult.hidden = true;
+    compareOriginal.hidden = true;
+    compareButton.disabled = true;
     downloadButton.disabled = true;
+    qualityValue.textContent = "—";
+    qualityBar.style.width = "0";
+    processingInfo.textContent = "در حال تحلیل عکس...";
     notify("عکس دریافت شد؛ بدن با پایتون اندازه‌گیری می‌شود.");
     updateActions();
     scheduleFit(120);
@@ -134,7 +148,9 @@
 
   function updateActions() {
     fitButton.disabled = !state.personFile || state.busy;
-    downloadButton.disabled = fitResult.hidden || !fitResult.src;
+    const ready = !fitResult.hidden && Boolean(fitResult.src);
+    downloadButton.disabled = !ready;
+    compareButton.disabled = !ready || !compareOriginal.src;
   }
 
   function setBusy(value) {
@@ -167,6 +183,7 @@
       form.append("category", state.category);
       form.append("scale", String(Number(scaleRange.value) / 100));
       form.append("width_scale", String(Number(widthRange.value) / 100));
+      form.append("offset_x", String(Number(xRange.value) / 100));
       form.append("offset_y", String(Number(yRange.value) / 100));
 
       const response = await fetch("/api/fit-local", {
@@ -182,10 +199,21 @@
 
       fitResult.src = data.image;
       fitResult.hidden = false;
+      compareOriginal.hidden = true;
+      compareButton.classList.remove("active");
       previewEmpty.hidden = true;
       downloadButton.disabled = false;
+      compareButton.disabled = false;
 
       const quality = Math.round((Number(data.pose_quality) || 0) * 100);
+      qualityValue.textContent = quality + "٪";
+      qualityBar.style.width = Math.max(0, Math.min(100, quality)) + "%";
+      const speed = Number(data.processing_ms) || 0;
+      const cache = data.cache || {};
+      processingInfo.textContent =
+        "پردازش " + speed + " میلی‌ثانیه" +
+        (cache.person ? " • بدن از کش" : "") +
+        (cache.garment ? " • لباس از کش" : "");
       const message = auto
         ? "لباس با پایتون روی بدن قرار گرفت — کیفیت تشخیص بدن " + quality + "٪"
         : "جایگذاری انجام شد — کیفیت تشخیص بدن " + quality + "٪";
@@ -193,7 +221,12 @@
     } catch (error) {
       if (currentRequest === state.requestId) {
         fitResult.hidden = true;
+        compareOriginal.hidden = true;
+        compareButton.disabled = true;
         downloadButton.disabled = true;
+        qualityValue.textContent = "—";
+        qualityBar.style.width = "0";
+        processingInfo.textContent = "برای نتیجه بهتر عکس تمام‌قد و روبه‌رو بفرست.";
         previewEmpty.hidden = false;
         previewEmpty.querySelector("b").textContent = "عکس برای جایگذاری مناسب نیست";
         previewEmpty.querySelector("small").textContent =
@@ -208,6 +241,7 @@
   function resetControls(run = true) {
     scaleRange.value = "100";
     widthRange.value = "100";
+    xRange.value = "0";
     yRange.value = "0";
     if (run) scheduleFit(100);
   }
@@ -239,9 +273,21 @@
 
   scaleRange.addEventListener("input", () => scheduleFit(320));
   widthRange.addEventListener("input", () => scheduleFit(320));
+  xRange.addEventListener("input", () => scheduleFit(320));
   yRange.addEventListener("input", () => scheduleFit(320));
   $("resetFit").addEventListener("click", () => resetControls(true));
   fitButton.addEventListener("click", () => runFit(false));
+
+  function showOriginal(show) {
+    if (compareButton.disabled) return;
+    compareOriginal.hidden = !show;
+    compareButton.classList.toggle("active", show);
+  }
+
+  compareButton.addEventListener("click", () => {
+    showOriginal(compareOriginal.hidden);
+  });
+
   downloadButton.addEventListener("click", () => {
     if (!fitResult.src || fitResult.hidden) return;
     const link = document.createElement("a");

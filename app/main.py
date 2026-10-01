@@ -55,6 +55,7 @@ async def _fit_request(
     category: str,
     scale: float,
     width_scale: float,
+    offset_x: float,
     offset_y: float,
 ) -> dict[str, object]:
     if category not in VALID_CATEGORIES:
@@ -74,6 +75,7 @@ async def _fit_request(
             max_side=settings.max_image_side,
             scale=scale,
             width_scale=width_scale,
+            offset_x=offset_x,
             offset_y=offset_y,
         )
     except LocalFitError as exc:
@@ -88,6 +90,11 @@ async def _fit_request(
         "engine": "python-opencv-mediapipe",
         "category": result.category,
         "pose_quality": round(result.pose_quality, 3),
+        "processing_ms": result.processing_ms,
+        "cache": {
+            "person": result.person_cache_hit,
+            "garment": result.garment_cache_hit,
+        },
     }
 
 
@@ -98,6 +105,7 @@ async def fit_local_endpoint(
     category: str = Form("tops"),
     scale: float = Form(1.0),
     width_scale: float = Form(1.0),
+    offset_x: float = Form(0.0),
     offset_y: float = Form(0.0),
 ) -> dict[str, object]:
     return await _fit_request(
@@ -106,6 +114,7 @@ async def fit_local_endpoint(
         category,
         scale,
         width_scale,
+        offset_x,
         offset_y,
     )
 
@@ -117,6 +126,7 @@ async def try_on_compat(
     category: str = Form("tops"),
     scale: float = Form(1.0),
     width_scale: float = Form(1.0),
+    offset_x: float = Form(0.0),
     offset_y: float = Form(0.0),
 ) -> dict[str, object]:
     return await _fit_request(
@@ -125,5 +135,6 @@ async def try_on_compat(
         category,
         scale,
         width_scale,
+        offset_x,
         offset_y,
     )

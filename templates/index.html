@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef1f4">
   <title>پرو مجازی لباس | Try Poshak</title>
-  <link rel="stylesheet" href="/static/styles.css?v=4">
+  <link rel="stylesheet" href="/static/styles.css?v=5">
 </head>
 <body>
 <header class="topbar">
@@ -110,16 +110,25 @@
         <div class="preview-empty" id="previewEmpty"><span class="empty-body"></span><b>اول عکس تمام‌قد را اضافه کن</b><small>بعد لباس را انتخاب کن؛ پایتون آن را روی بدن جایگذاری می‌کند.</small></div>
         <div class="ai-loading" id="fitLoading" hidden><span class="spinner"></span><b>در حال اندازه‌گیری بدن و جایگذاری لباس...</b><small>پردازش کاملاً روی همین سیستم انجام می‌شود.</small></div>
         <img id="fitResult" alt="لباس جایگذاری شده روی بدن" hidden>
+        <img id="compareOriginal" class="compare-original" alt="عکس اصلی" hidden>
+      </div>
+
+      <div class="fit-status" id="fitStatus">
+        <div><span>کیفیت تشخیص بدن</span><b id="qualityValue">—</b></div>
+        <div class="quality-track"><i id="qualityBar"></i></div>
+        <small id="processingInfo">پس از انتخاب عکس نمایش داده می‌شود.</small>
       </div>
 
       <div class="fit-controls">
         <div><label for="scaleRange">قد و اندازه لباس</label><input id="scaleRange" type="range" min="70" max="135" value="100"></div>
         <div><label for="widthRange">پهنای لباس</label><input id="widthRange" type="range" min="72" max="145" value="100"></div>
+        <div><label for="xRange">چپ / راست</label><input id="xRange" type="range" min="-25" max="25" value="0"></div>
         <div><label for="yRange">بالا / پایین</label><input id="yRange" type="range" min="-25" max="25" value="0"></div>
       </div>
 
       <div class="action-row">
         <button id="fitButton" class="primary-btn" type="button"><span>جایگذاری با پایتون</span><b>⌁</b></button>
+        <button id="compareButton" class="compare-btn" type="button" disabled>قبل / بعد</button>
         <button id="downloadButton" class="download-btn" type="button" disabled>دانلود</button>
         <button id="resetFit" class="icon-btn" type="button">↻</button>
       </div>
@@ -139,6 +148,6 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>window.TRY_POSHAK={localEngine:true};</script>
-<script src="/static/app.js?v=4" defer></script>
+<script src="/static/app.js?v=5" defer></script>
 </body>
 </html>

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import math
+import hashlib
 import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import cv2
@@ -18,9 +20,17 @@ class LocalFitResult:
     image_bytes: bytes
     pose_quality: float
     category: str
+    processing_ms: int
+    person_cache_hit: bool
+    garment_cache_hit: bool
 
 
 _POSE_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
+_PERSON_CACHE: OrderedDict[str, tuple[np.ndarray, list[dict], np.ndarray | None, float]] = OrderedDict()
+_GARMENT_CACHE: OrderedDict[str, np.ndarray] = OrderedDict()
+_PERSON_CACHE_LIMIT = 8
+_GARMENT_CACHE_LIMIT = 24
 _POSE = mp.solutions.pose.Pose(
     static_image_mode=True,
     model_complexity=1,
@@ -147,6 +157,72 @@ def _extract_garment(image: np.ndarray) -> np.ndarray:
     return rgba
 
 
+def _cache_key(raw: bytes, *, max_side: int, prefix: str) -> str:
+    h = hashlib.blake2b(digest_size=16)
+    h.update(prefix.encode("ascii"))
+    h.update(str(max_side).encode("ascii"))
+    h.update(raw)
+    return h.hexdigest()
+
+
+def _cache_get(cache: OrderedDict, key: str):
+    with _CACHE_LOCK:
+        value = cache.get(key)
+        if value is None:
+            return None
+        cache.move_to_end(key)
+        return value
+
+
+def _cache_put(cache: OrderedDict, key: str, value, limit: int) -> None:
+    with _CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > limit:
+            cache.popitem(last=False)
+
+
+def _prepare_person(
+    raw: bytes,
+    *,
+    max_upload_bytes: int,
+    max_side: int,
+) -> tuple[np.ndarray, list[dict], np.ndarray | None, float, bool]:
+    key = _cache_key(raw, max_side=max_side, prefix="person")
+    cached = _cache_get(_PERSON_CACHE, key)
+    if cached is not None:
+        person, chains, segmentation, quality = cached
+        return person, chains, segmentation, quality, True
+
+    person_src = _decode(raw, max_bytes=max_upload_bytes, max_side=max_side)
+    person = _to_bgr(person_src)
+    chains, segmentation, quality = _detect_pose(person)
+    _cache_put(
+        _PERSON_CACHE,
+        key,
+        (person, chains, segmentation, quality),
+        _PERSON_CACHE_LIMIT,
+    )
+    return person, chains, segmentation, quality, False
+
+
+def _prepare_garment(
+    raw: bytes,
+    *,
+    max_upload_bytes: int,
+    max_side: int,
+) -> tuple[np.ndarray, bool]:
+    key = _cache_key(raw, max_side=max_side, prefix="garment")
+    cached = _cache_get(_GARMENT_CACHE, key)
+    if cached is not None:
+        return cached, True
+
+    garment_src = _decode(raw, max_bytes=max_upload_bytes, max_side=max_side)
+    garment = _extract_garment(garment_src)
+    _cache_put(_GARMENT_CACHE, key, garment, _GARMENT_CACHE_LIMIT)
+    return garment, False
+
+
 def _point(landmarks, index: int, w: int, h: int) -> np.ndarray:
     lm = landmarks[index]
     return np.array([lm.x * w, lm.y * h], dtype=np.float32)
@@ -169,8 +245,14 @@ def _detect_pose(person: np.ndarray):
 
     lm = result.pose_landmarks.landmark
     h, w = person.shape[:2]
-    quality = _visibility(lm, [11, 12, 23, 24, 25, 26, 27, 28])
-    if quality < 0.36:
+    visibility_quality = _visibility(lm, [11, 12, 23, 24, 25, 26, 27, 28])
+    nose = _point(lm, 0, w, h)
+    ankle_y = max(_point(lm, 27, w, h)[1], _point(lm, 28, w, h)[1])
+    body_fraction = float(np.clip((ankle_y - nose[1]) / max(1.0, float(h)), 0.0, 1.0))
+    framing_quality = float(np.clip((body_fraction - 0.30) / 0.48, 0.0, 1.0))
+    quality = visibility_quality * 0.78 + framing_quality * 0.22
+
+    if visibility_quality < 0.36:
         raise LocalFitError(
             "نقاط بدن واضح نیستند. سر، شانه‌ها، کمر، زانو و پاها باید داخل کادر باشند."
         )
@@ -202,22 +284,173 @@ def _detect_pose(person: np.ndarray):
     return chains, segmentation, quality
 
 
-def _src_points_top(w: int, h: int) -> np.ndarray:
-    pts = [
-        (0.34, 0.04), (0.66, 0.04),
-        (0.02, 0.24), (0.98, 0.24),
-        (0.22, 0.35), (0.78, 0.35),
-        (0.24, 0.98), (0.76, 0.98),
-    ]
-    return np.array([(x * (w - 1), y * (h - 1)) for x, y in pts], np.float32)
+def _row_extent(mask: np.ndarray, y: int) -> tuple[float, float] | None:
+    y = int(np.clip(y, 0, mask.shape[0] - 1))
+    xs = np.flatnonzero(mask[y])
+    if len(xs) < 2:
+        return None
+    return float(xs[0]), float(xs[-1])
 
 
-def _dst_points_top(chains, scale: float, width_scale: float, offset_y: float) -> np.ndarray:
+def _row_segments(mask: np.ndarray, y: int) -> list[tuple[int, int]]:
+    y = int(np.clip(y, 0, mask.shape[0] - 1))
+    xs = np.flatnonzero(mask[y])
+    if len(xs) == 0:
+        return []
+    gaps = np.where(np.diff(xs) > 1)[0]
+    starts = np.r_[0, gaps + 1]
+    ends = np.r_[gaps, len(xs) - 1]
+    return [(int(xs[s]), int(xs[e])) for s, e in zip(starts, ends)]
+
+
+def _src_points_top(garment: np.ndarray) -> np.ndarray:
+    h, w = garment.shape[:2]
+    mask = garment[:, :, 3] > 28
+    ys, xs = np.where(mask)
+    if len(xs) < 50:
+        pts = [
+            (0.34, 0.04), (0.66, 0.04),
+            (0.02, 0.24), (0.98, 0.24),
+            (0.22, 0.35), (0.78, 0.35),
+            (0.24, 0.98), (0.76, 0.98),
+        ]
+        return np.array([(x * (w - 1), y * (h - 1)) for x, y in pts], np.float32)
+
+    center = float(np.median(xs))
+    body_widths: list[float] = []
+    for y in range(int(h * 0.45), max(int(h * 0.96), int(h * 0.45) + 1)):
+        ext = _row_extent(mask, y)
+        if ext:
+            body_widths.append(ext[1] - ext[0])
+    body_width = (
+        float(np.percentile(body_widths, 20))
+        if body_widths
+        else float(w * 0.52)
+    )
+    body_width = max(body_width, w * 0.22)
+
+    shoulder_y = max(1, int(h * 0.05))
+    shoulder_l = center - body_width * 0.47
+    shoulder_r = center + body_width * 0.47
+
+    widest_y = int(h * 0.24)
+    widest_ext = None
+    widest = -1.0
+    for y in range(max(1, int(h * 0.07)), max(2, int(h * 0.58))):
+        ext = _row_extent(mask, y)
+        if ext and ext[1] - ext[0] > widest:
+            widest = ext[1] - ext[0]
+            widest_ext = ext
+            widest_y = y
+
+    if widest_ext is None:
+        widest_ext = (0.0, float(w - 1))
+
+    side_left = center - body_width * 0.58
+    side_right = center + body_width * 0.58
+    sleeve_rows: list[int] = []
+    for y in range(max(1, int(h * 0.06)), max(2, int(h * 0.96))):
+        row = np.flatnonzero(mask[y])
+        if len(row) and (row[0] < side_left or row[-1] > side_right):
+            sleeve_rows.append(y)
+
+    sleeve_y = max(sleeve_rows) if sleeve_rows else widest_y
+    sleeve_ext = _row_extent(mask, sleeve_y) or widest_ext
+    sleeve_l, sleeve_r = sleeve_ext
+
+    armpit_y = int(np.clip(h * 0.36, 1, h - 2))
+    armpit_l = center - body_width * 0.52
+    armpit_r = center + body_width * 0.52
+
+    bottom_extents = []
+    for y in range(max(0, int(h * 0.88)), h):
+        ext = _row_extent(mask, y)
+        if ext:
+            bottom_extents.append(ext)
+    if bottom_extents:
+        bottom_l = float(np.median([e[0] for e in bottom_extents]))
+        bottom_r = float(np.median([e[1] for e in bottom_extents]))
+    else:
+        bottom_l = center - body_width * 0.48
+        bottom_r = center + body_width * 0.48
+
+    return np.array(
+        [
+            (shoulder_l, shoulder_y),
+            (shoulder_r, shoulder_y),
+            (sleeve_l, sleeve_y),
+            (sleeve_r, sleeve_y),
+            (armpit_l, armpit_y),
+            (armpit_r, armpit_y),
+            (bottom_l, h - 1),
+            (bottom_r, h - 1),
+        ],
+        np.float32,
+    )
+
+
+def _estimate_sleeve_reach(garment: np.ndarray) -> float:
+    h, w = garment.shape[:2]
+    mask = garment[:, :, 3] > 28
+    ys, xs = np.where(mask)
+    if len(xs) < 50:
+        return 0.75
+
+    center = float(np.median(xs))
+    body_widths: list[float] = []
+    for y in range(int(h * 0.45), max(int(h * 0.96), int(h * 0.45) + 1)):
+        ext = _row_extent(mask, y)
+        if ext:
+            body_widths.append(ext[1] - ext[0])
+    body_width = (
+        float(np.percentile(body_widths, 20))
+        if body_widths
+        else float(w * 0.52)
+    )
+    body_width = max(body_width, w * 0.22)
+
+    side_left = center - body_width * 0.58
+    side_right = center + body_width * 0.58
+    sleeve_rows: list[int] = []
+    for y in range(max(1, int(h * 0.06)), max(2, int(h * 0.97))):
+        row = np.flatnonzero(mask[y])
+        if len(row) and (row[0] < side_left or row[-1] > side_right):
+            sleeve_rows.append(y)
+
+    if not sleeve_rows:
+        return 0.42
+
+    depth = float(np.percentile(sleeve_rows, 96)) / max(1.0, float(h - 1))
+    return float(
+        np.interp(
+            depth,
+            [0.28, 0.42, 0.62, 0.82, 0.96],
+            [0.52, 0.78, 1.12, 1.58, 1.90],
+        )
+    )
+
+
+def _arm_point(chain: dict, reach: float) -> np.ndarray:
+    shoulder = chain["shoulder"]
+    elbow = chain["elbow"]
+    wrist = chain["wrist"]
+    reach = float(np.clip(reach, 0.2, 1.95))
+    if reach <= 1.0:
+        return shoulder + (elbow - shoulder) * reach
+    return elbow + (wrist - elbow) * (reach - 1.0)
+
+
+def _dst_points_top(
+    chains,
+    scale: float,
+    width_scale: float,
+    offset_x: float,
+    offset_y: float,
+    sleeve_reach: float = 0.75,
+) -> np.ndarray:
     left, right = chains
     sl, sr = left["shoulder"], right["shoulder"]
     hl, hr = left["hip"], right["hip"]
-    el, er = left["elbow"], right["elbow"]
-
     sw = max(20.0, float(np.linalg.norm(sr - sl)))
     torso_h = max(30.0, float(np.linalg.norm((hl + hr) / 2 - (sl + sr) / 2)))
 
@@ -225,8 +458,22 @@ def _dst_points_top(chains, scale: float, width_scale: float, offset_y: float) -
     s_r = sr + np.array([0.10 * sw, -0.035 * torso_h], np.float32)
     a_l = sl * 0.68 + hl * 0.32 + np.array([-0.08 * sw, 0], np.float32)
     a_r = sr * 0.68 + hr * 0.32 + np.array([0.08 * sw, 0], np.float32)
-    sleeve_l = sl + (el - sl) * 0.45 + np.array([-0.10 * sw, 0], np.float32)
-    sleeve_r = sr + (er - sr) * 0.45 + np.array([0.10 * sw, 0], np.float32)
+
+    def outer_sleeve_point(chain: dict, desired_x: float) -> np.ndarray:
+        point = _arm_point(chain, sleeve_reach)
+        vec = point - chain["shoulder"]
+        normal = np.array([-vec[1], vec[0]], dtype=np.float32)
+        norm = float(np.linalg.norm(normal))
+        if norm < 1e-4:
+            normal = np.array([desired_x, 0.0], dtype=np.float32)
+        else:
+            normal /= norm
+            if normal[0] * desired_x < 0:
+                normal *= -1.0
+        return point + normal * (sw * 0.08)
+
+    sleeve_l = outer_sleeve_point(left, -1.0)
+    sleeve_r = outer_sleeve_point(right, 1.0)
     bottom_l = hl + np.array([-0.08 * sw, 0.10 * torso_h], np.float32)
     bottom_r = hr + np.array([0.08 * sw, 0.10 * torso_h], np.float32)
 
@@ -237,17 +484,80 @@ def _dst_points_top(chains, scale: float, width_scale: float, offset_y: float) -
     center = (pts[0] + pts[1] + pts[6] + pts[7]) / 4.0
     pts = center + (pts - center) * float(scale)
     pts[:, 0] = center[0] + (pts[:, 0] - center[0]) * float(width_scale)
+    pts[:, 0] += float(offset_x) * sw
     pts[:, 1] += float(offset_y) * torso_h
     return pts
 
 
-def _src_points_bottom(w: int, h: int) -> np.ndarray:
-    pts = [
-        (0.07, 0.03), (0.93, 0.03), (0.50, 0.43),
-        (0.15, 0.64), (0.43, 0.64), (0.57, 0.64), (0.85, 0.64),
-        (0.12, 0.98), (0.43, 0.98), (0.57, 0.98), (0.88, 0.98),
-    ]
-    return np.array([(x * (w - 1), y * (h - 1)) for x, y in pts], np.float32)
+def _src_points_bottom(garment: np.ndarray) -> np.ndarray:
+    h, w = garment.shape[:2]
+    mask = garment[:, :, 3] > 28
+    ys, xs = np.where(mask)
+    if len(xs) < 50:
+        pts = [
+            (0.07, 0.03), (0.93, 0.03), (0.50, 0.43),
+            (0.15, 0.64), (0.43, 0.64), (0.57, 0.64), (0.85, 0.64),
+            (0.12, 0.98), (0.43, 0.98), (0.57, 0.98), (0.88, 0.98),
+        ]
+        return np.array([(x * (w - 1), y * (h - 1)) for x, y in pts], np.float32)
+
+    center = float(np.median(xs))
+
+    waist_rows = []
+    for y in range(max(0, int(h * 0.02)), max(1, int(h * 0.14))):
+        ext = _row_extent(mask, y)
+        if ext:
+            waist_rows.append(ext)
+    if waist_rows:
+        waist_l = float(np.median([e[0] for e in waist_rows]))
+        waist_r = float(np.median([e[1] for e in waist_rows]))
+    else:
+        waist_l, waist_r = w * 0.08, w * 0.92
+
+    crotch_y = int(h * 0.43)
+    for y in range(int(h * 0.20), int(h * 0.68)):
+        segs = [s for s in _row_segments(mask, y) if s[1] - s[0] > max(3, w * 0.03)]
+        if len(segs) >= 2:
+            left_seg = min(segs, key=lambda s: s[0])
+            right_seg = max(segs, key=lambda s: s[1])
+            if left_seg[1] < center < right_seg[0]:
+                crotch_y = max(int(h * 0.18), y - max(1, int(h * 0.02)))
+                break
+
+    knee_y = int(crotch_y + (h - crotch_y) * 0.43)
+    ankle_y = max(crotch_y + 1, int(h * 0.96))
+
+    def leg_points(y: int, fallback_frac: float) -> tuple[float, float, float, float]:
+        segs = [s for s in _row_segments(mask, y) if s[1] - s[0] > max(2, w * 0.02)]
+        if len(segs) >= 2:
+            segs = sorted(segs, key=lambda s: (s[0] + s[1]) / 2)
+            left = segs[0]
+            right = segs[-1]
+            return float(left[0]), float(left[1]), float(right[0]), float(right[1])
+        half = max(w * 0.12, (waist_r - waist_l) * fallback_frac)
+        gap = max(w * 0.02, (waist_r - waist_l) * 0.04)
+        return (
+            center - gap - half,
+            center - gap,
+            center + gap,
+            center + gap + half,
+        )
+
+    lk_o, lk_i, rk_i, rk_o = leg_points(knee_y, 0.33)
+    la_o, la_i, ra_i, ra_o = leg_points(ankle_y, 0.25)
+
+    return np.array(
+        [
+            (waist_l, max(1, int(h * 0.04))),
+            (waist_r, max(1, int(h * 0.04))),
+            (center, crotch_y),
+            (lk_o, knee_y), (lk_i, knee_y),
+            (rk_i, knee_y), (rk_o, knee_y),
+            (la_o, ankle_y), (la_i, ankle_y),
+            (ra_i, ankle_y), (ra_o, ankle_y),
+        ],
+        np.float32,
+    )
 
 
 def _side_pair(center: np.ndarray, width: float) -> tuple[np.ndarray, np.ndarray]:
@@ -257,7 +567,13 @@ def _side_pair(center: np.ndarray, width: float) -> tuple[np.ndarray, np.ndarray
     )
 
 
-def _dst_points_bottom(chains, scale: float, width_scale: float, offset_y: float) -> np.ndarray:
+def _dst_points_bottom(
+    chains,
+    scale: float,
+    width_scale: float,
+    offset_x: float,
+    offset_y: float,
+) -> np.ndarray:
     left, right = chains
     hl, hr = left["hip"], right["hip"]
     kl, kr = left["knee"], right["knee"]
@@ -281,6 +597,7 @@ def _dst_points_bottom(chains, scale: float, width_scale: float, offset_y: float
     center = (waist_l + waist_r + al + ar) / 4.0
     pts = center + (pts - center) * float(scale)
     pts[:, 0] = center[0] + (pts[:, 0] - center[0]) * float(width_scale)
+    pts[:, 0] += float(offset_x) * hip_w
     pts[:, 1] += float(offset_y) * leg_h
     return pts
 
@@ -429,39 +746,108 @@ def _clip_to_body(overlay: np.ndarray, segmentation: np.ndarray | None, shoulder
     return overlay
 
 
+def _feather_overlay(overlay: np.ndarray, shoulder_width: float) -> np.ndarray:
+    feathered = overlay.copy()
+    sigma = float(np.clip(shoulder_width * 0.006, 0.55, 1.8))
+    feathered[:, :, 3] = cv2.GaussianBlur(
+        feathered[:, :, 3],
+        (0, 0),
+        sigmaX=sigma,
+    )
+    return feathered
+
+
+def _apply_local_lighting(overlay: np.ndarray, person: np.ndarray) -> np.ndarray:
+    alpha = overlay[:, :, 3] > 18
+    if np.count_nonzero(alpha) < 200:
+        return overlay
+
+    gray = cv2.cvtColor(person, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    sigma = max(6.0, min(person.shape[:2]) * 0.025)
+    smooth = cv2.GaussianBlur(gray, (0, 0), sigmaX=sigma)
+    reference = float(np.median(smooth[alpha]))
+    if reference < 12:
+        return overlay
+
+    lighting = np.clip(smooth / reference, 0.78, 1.20)
+    shaded = overlay.copy()
+    rgb = shaded[:, :, :3].astype(np.float32)
+    rgb *= lighting[:, :, None]
+    shaded[:, :, :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+    return shaded
+
+
 def _alpha_blend(base: np.ndarray, overlay: np.ndarray) -> np.ndarray:
     alpha = overlay[:, :, 3:4].astype(np.float32) / 255.0
     out = overlay[:, :, :3].astype(np.float32) * alpha + base.astype(np.float32) * (1.0 - alpha)
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def _restore_forearms(result: np.ndarray, original: np.ndarray, chains, shoulder_width: float) -> np.ndarray:
+def _restore_exposed_arms(
+    result: np.ndarray,
+    original: np.ndarray,
+    chains,
+    shoulder_width: float,
+    sleeve_reach: float,
+) -> np.ndarray:
     mask = np.zeros(original.shape[:2], np.uint8)
     thickness = max(8, int(shoulder_width * 0.16))
+
+    shoulder_mid = (chains[0]["shoulder"] + chains[1]["shoulder"]) / 2.0
+    head_center = shoulder_mid + np.array([0.0, -0.55 * shoulder_width], np.float32)
+    head_axes = (
+        max(10, int(shoulder_width * 0.34)),
+        max(12, int(shoulder_width * 0.46)),
+    )
+    cv2.ellipse(
+        mask,
+        tuple(np.int32(head_center)),
+        head_axes,
+        0,
+        0,
+        360,
+        255,
+        -1,
+        cv2.LINE_AA,
+    )
+
     for chain in chains:
-        shoulder, elbow, wrist = chain["shoulder"], chain["elbow"], chain["wrist"]
-        start = shoulder + (elbow - shoulder) * 0.58
+        shoulder = chain["shoulder"]
+        elbow = chain["elbow"]
+        wrist = chain["wrist"]
+
+        # For short sleeves, restore the visible arm from the sleeve hem down.
+        # For long sleeves, only the wrist/hand is restored in front of the cloth.
+        if sleeve_reach <= 1.0:
+            start = shoulder + (elbow - shoulder) * float(np.clip(sleeve_reach, 0.25, 0.95))
+        else:
+            forearm_fraction = float(np.clip(sleeve_reach - 1.0, 0.0, 0.92))
+            start = elbow + (wrist - elbow) * forearm_fraction
+
         cv2.line(
             mask,
             tuple(np.int32(start)),
-            tuple(np.int32(elbow)),
-            255,
-            thickness,
-            lineType=cv2.LINE_AA,
-        )
-        cv2.line(
-            mask,
-            tuple(np.int32(elbow)),
             tuple(np.int32(wrist)),
             255,
             max(thickness - 2, 6),
             lineType=cv2.LINE_AA,
         )
-        cv2.circle(mask, tuple(np.int32(wrist)), max(5, thickness // 2), 255, -1, cv2.LINE_AA)
+        cv2.circle(
+            mask,
+            tuple(np.int32(wrist)),
+            max(5, thickness // 2),
+            255,
+            -1,
+            cv2.LINE_AA,
+        )
 
     mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=1.2)
     a = mask[:, :, None].astype(np.float32) / 255.0
-    return np.clip(original.astype(np.float32) * a + result.astype(np.float32) * (1.0 - a), 0, 255).astype(np.uint8)
+    return np.clip(
+        original.astype(np.float32) * a + result.astype(np.float32) * (1.0 - a),
+        0,
+        255,
+    ).astype(np.uint8)
 
 
 def fit_local(
@@ -473,6 +859,7 @@ def fit_local(
     max_side: int,
     scale: float = 1.0,
     width_scale: float = 1.0,
+    offset_x: float = 0.0,
     offset_y: float = 0.0,
 ) -> LocalFitResult:
     if category not in {"tops", "bottoms"}:
@@ -480,25 +867,40 @@ def fit_local(
 
     scale = float(np.clip(scale, 0.72, 1.35))
     width_scale = float(np.clip(width_scale, 0.72, 1.45))
+    offset_x = float(np.clip(offset_x, -0.30, 0.30))
     offset_y = float(np.clip(offset_y, -0.28, 0.28))
 
-    person_src = _decode(person_raw, max_bytes=max_upload_bytes, max_side=max_side)
-    garment_src = _decode(garment_raw, max_bytes=max_upload_bytes, max_side=max_side)
-
-    person = _to_bgr(person_src)
-    garment = _extract_garment(garment_src)
-    chains, segmentation, quality = _detect_pose(person)
+    started = time.perf_counter()
+    person, chains, segmentation, quality, person_cache_hit = _prepare_person(
+        person_raw,
+        max_upload_bytes=max_upload_bytes,
+        max_side=max_side,
+    )
+    garment, garment_cache_hit = _prepare_garment(
+        garment_raw,
+        max_upload_bytes=max_upload_bytes,
+        max_side=max_side,
+    )
 
     h, w = person.shape[:2]
     shoulder_width = float(np.linalg.norm(chains[1]["shoulder"] - chains[0]["shoulder"]))
 
     if category == "tops":
-        src = _src_points_top(garment.shape[1], garment.shape[0])
-        dst = _dst_points_top(chains, scale, width_scale, offset_y)
+        sleeve_reach = _estimate_sleeve_reach(garment)
+        src = _src_points_top(garment)
+        dst = _dst_points_top(
+            chains,
+            scale,
+            width_scale,
+            offset_x,
+            offset_y,
+            sleeve_reach=sleeve_reach,
+        )
         overlay = _warp_top(garment, (h, w), src, dst)
     else:
-        src = _src_points_bottom(garment.shape[1], garment.shape[0])
-        dst = _dst_points_bottom(chains, scale, width_scale, offset_y)
+        sleeve_reach = 0.25
+        src = _src_points_bottom(garment)
+        dst = _dst_points_bottom(chains, scale, width_scale, offset_x, offset_y)
         triangles = [
             (0, 1, 2),
             (0, 2, 3), (2, 4, 3),
@@ -508,8 +910,16 @@ def fit_local(
         ]
         overlay = _warp_piecewise(garment, (h, w), src, dst, triangles)
     overlay = _clip_to_body(overlay, segmentation, shoulder_width)
+    overlay = _feather_overlay(overlay, shoulder_width)
+    overlay = _apply_local_lighting(overlay, person)
     fitted = _alpha_blend(person, overlay)
-    fitted = _restore_forearms(fitted, person, chains, shoulder_width)
+    fitted = _restore_exposed_arms(
+        fitted,
+        person,
+        chains,
+        shoulder_width,
+        sleeve_reach,
+    )
 
     ok, encoded = cv2.imencode(".jpg", fitted, [int(cv2.IMWRITE_JPEG_QUALITY), 94])
     if not ok:
@@ -519,4 +929,7 @@ def fit_local(
         image_bytes=encoded.tobytes(),
         pose_quality=quality,
         category=category,
+        processing_ms=max(1, int((time.perf_counter() - started) * 1000)),
+        person_cache_hit=person_cache_hit,
+        garment_cache_hit=garment_cache_hit,
     )
