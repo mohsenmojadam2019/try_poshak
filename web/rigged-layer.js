@@ -7,6 +7,7 @@ const IDX = {
   L_SHOULDER: 11, R_SHOULDER: 12,
   L_ELBOW: 13, R_ELBOW: 14,
   L_WRIST: 15, R_WRIST: 16,
+  L_HIP: 23, R_HIP: 24,
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -78,12 +79,21 @@ export class RiggedGarmentLayer {
     this._bonePosA = new THREE.Vector3();
     this._bonePosB = new THREE.Vector3();
 
-    this.refSize = 0.50;
+    // Visual-fit calibration. The old depth formula accidentally cancelled
+    // the detected shoulder width and behaved like an almost 1-metre shoulder
+    // span, which is why the shirt looked 2-3x too large. We calibrate the
+    // virtual camera against a realistic shoulder reference, then align the
+    // rig's shoulder bones to the detected shoulders.
+    this.referenceShoulderWidth = 0.43;
     this.fitFactor = 1.0;
     this.garmentScale = 1.0;
     this.baseWidth = 0.8;
-    this.baseShoulderWidth = 0.27;
-    this.garmentWidthFactor = 1.04;
+    this.baseHeight = 0.7;
+    this.baseShoulderWidth = 0.33;
+    this.modelBottomLocalY = -0.3;
+    this.modelShoulderToHem = 0.58;
+    this.garmentWidthFactor = 1.01;
+    this.garmentLengthFactor = 0.94;
     this.minDepth = 0.45;
     this.maxDepth = 6.0;
     this.torsoDrop = 1.08;
@@ -98,6 +108,8 @@ export class RiggedGarmentLayer {
     this.restDir = new THREE.Vector3();
     this.targetQ = new THREE.Quaternion();
     this.yawQ = new THREE.Quaternion();
+    this.rollQ = new THREE.Quaternion();
+    this.rootTargetQ = new THREE.Quaternion();
   }
 
   async load(url) {
@@ -126,6 +138,8 @@ export class RiggedGarmentLayer {
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
       this.baseWidth = Math.max(0.05, size.x);
+      this.baseHeight = Math.max(0.05, size.y);
+      this.modelBottomLocalY = box.min.y - center.y;
 
       rawModel.position.set(-center.x, -center.y, -center.z);
 
@@ -201,6 +215,7 @@ export class RiggedGarmentLayer {
   bindSkeleton() {
     this.bones = {};
     this.restAxis = {};
+    this.restQuat = {};
     this.lastQuat = {};
 
     let skeleton = null;
@@ -225,8 +240,14 @@ export class RiggedGarmentLayer {
 
       const axis = child.position.clone();
       if (axis.lengthSq() < 1e-8) continue;
-      this.restAxis[boneName] = axis.normalize();
-      this.lastQuat[boneName] = bone.quaternion.clone();
+
+      const restQ = bone.quaternion.clone();
+      // child.position lives in the bone's local frame. Convert the bind-pose
+      // limb direction into the bone-parent frame so it can be compared with
+      // the live target direction in the same coordinate system.
+      this.restAxis[boneName] = axis.normalize().applyQuaternion(restQ);
+      this.restQuat[boneName] = restQ;
+      this.lastQuat[boneName] = restQ.clone();
     }
   }
 
@@ -242,6 +263,10 @@ export class RiggedGarmentLayer {
     const rightLocal = this.wrapper.worldToLocal(this._bonePosB.clone());
     this.baseShoulderWidth = Math.max(0.02, leftLocal.distanceTo(rightLocal));
     this.modelShoulderLocal.copy(leftLocal).add(rightLocal).multiplyScalar(0.5);
+    this.modelShoulderToHem = Math.max(
+      0.08,
+      this.modelShoulderLocal.y - this.modelBottomLocalY
+    );
   }
 
   setEnabled(enabled) {
@@ -278,32 +303,69 @@ export class RiggedGarmentLayer {
     const shoulderMidY = (sl.y + sr.y) * 0.5;
     const shoulderW = Math.max(Math.hypot(sl.x - sr.x, sl.y - sr.y), 0.001);
 
-    // Shoulder span is a more stable upper-body size cue than nose distance
-    // when object-fit: cover crops the head out of a wide camera stage.
-    const invSize = Math.max(shoulderW * 0.52, 0.02);
-
     const vFov = THREE.MathUtils.degToRad(camera.fov);
     const tanHalf = Math.tan(vFov * 0.5);
-    const denom = 2 * Math.max(invSize * this.fitFactor, 0.01) * tanHalf * camera.aspect;
-    const distance = clamp(this.refSize / denom, this.minDepth, this.maxDepth);
+
+    // Estimate virtual camera depth from the *observed shoulder span* and a
+    // realistic physical shoulder reference. This preserves perspective while
+    // keeping the projected rig shoulders locked to the user's shoulders.
+    const denom = Math.max(
+      shoulderW * 2 * tanHalf * camera.aspect * this.fitFactor,
+      0.0001
+    );
+    const distance = clamp(
+      this.referenceShoulderWidth / denom,
+      this.minDepth,
+      this.maxDepth
+    );
     const depthZ = camera.position.z - distance;
 
     this.yawQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -(yaw || 0));
+    const shoulderRoll = -Math.atan2(sr.y - sl.y, sr.x - sl.x);
+    this.rollQ.setFromAxisAngle(new THREE.Vector3(0, 0, 1), shoulderRoll);
+    this.rootTargetQ.copy(this.rollQ).multiply(this.yawQ);
 
-    // Calibrate the actual 3D garment width to the detected shoulder width.
-    // This is crop-independent, so seated/upper-body views keep the same fit.
     const worldWidthAtDepth = 2 * tanHalf * distance * camera.aspect;
-    const desiredShoulderWidth = shoulderW * worldWidthAtDepth * this.garmentWidthFactor;
-    const fittedScale = clamp(
-      desiredShoulderWidth / Math.max(this.baseShoulderWidth, 0.02),
-      0.55,
-      3.2
+    const targetShoulderWorldWidth =
+      shoulderW * worldWidthAtDepth * this.garmentWidthFactor;
+
+    // Width is fitted from the rig's anatomical shoulder bones, not from the
+    // garment bounding box. Vertical scale is independently refined from the
+    // visible shoulder-to-hip distance when hips are available. This prevents
+    // the oversized torso/neck seen in the previous build.
+    const scaleX = clamp(
+      targetShoulderWorldWidth / Math.max(this.baseShoulderWidth, 0.02),
+      0.62,
+      1.85
     );
 
+    let scaleY = scaleX * this.garmentLengthFactor;
+    const lh = landmarks[IDX.L_HIP];
+    const rh = landmarks[IDX.R_HIP];
+    if (visible(lh, 0.18) && visible(rh, 0.18)) {
+      const hl = toStage(lh);
+      const hr = toStage(rh);
+      const hipMidX = (hl.x + hr.x) * 0.5;
+      const hipMidY = (hl.y + hr.y) * 0.5;
+      const torsoScreen = Math.hypot(
+        hipMidX - shoulderMidX,
+        hipMidY - shoulderMidY
+      );
+      const worldHeightAtDepth = 2 * tanHalf * distance;
+      const targetTorsoWorld = torsoScreen * worldHeightAtDepth;
+      scaleY = clamp(
+        (targetTorsoWorld * this.garmentLengthFactor) /
+          Math.max(this.modelShoulderToHem, 0.08),
+        scaleX * 0.78,
+        scaleX * 1.18
+      );
+    }
+
+    const scaleZ = Math.min(scaleX, scaleY) * 0.96;
+    this.targetScale.set(scaleX, scaleY, scaleZ);
+
     // Exact anchor fit: project the user's shoulder midpoint into the 3D scene,
-    // then place the garment so its rigged shoulder midpoint lands on that same
-    // point. This replaces the old arbitrary torso-drop offset that made the
-    // shirt sit too low on the chest.
+    // then place the model so the rigged shoulder midpoint lands on it.
     const shoulderTarget = this.projectAtDepth(
       shoulderMidX,
       shoulderMidY,
@@ -314,23 +376,22 @@ export class RiggedGarmentLayer {
     );
     this.shoulderOffsetWorld
       .copy(this.modelShoulderLocal)
-      .multiplyScalar(fittedScale)
-      .applyQuaternion(this.yawQ);
+      .multiply(this.targetScale)
+      .applyQuaternion(this.rootTargetQ);
     const targetPos = this.tmp
       .copy(shoulderTarget)
       .sub(this.shoulderOffsetWorld);
 
     if (!this.hasRootState) {
       this.currentPosition.copy(targetPos);
-      this.currentScale.setScalar(fittedScale);
-      this.currentQuaternion.copy(this.yawQ);
+      this.currentScale.copy(this.targetScale);
+      this.currentQuaternion.copy(this.rootTargetQ);
       this.hasRootState = true;
     } else {
       const pAlpha = clamp(this.positionLerp + dt * 1.5, 0.35, 0.72);
       this.currentPosition.lerp(targetPos, pAlpha);
-      this.targetScale.setScalar(fittedScale);
       this.currentScale.lerp(this.targetScale, this.scaleLerp);
-      this.currentQuaternion.slerp(this.yawQ, this.rotationLerp);
+      this.currentQuaternion.slerp(this.rootTargetQ, this.rotationLerp);
     }
 
     this.wrapper.position.copy(this.currentPosition);
@@ -365,8 +426,9 @@ export class RiggedGarmentLayer {
     for (const [boneName, fromIdx, toIdx] of chains) {
       const bone = this.bones[boneName];
       const restAxis = this.restAxis[boneName];
+      const restQ = this.restQuat[boneName];
       const last = this.lastQuat[boneName];
-      if (!bone || !restAxis || !last || !bone.parent) continue;
+      if (!bone || !restAxis || !restQ || !last || !bone.parent) continue;
       if (!visible(lm[fromIdx], 0.16) || !visible(lm[toIdx], 0.16)) continue;
 
       const direction = limbDirection(lm, world, fromIdx, toIdx);
@@ -378,9 +440,14 @@ export class RiggedGarmentLayer {
       this.targetDir.copy(direction).applyQuaternion(this.parentInvQ).normalize();
 
       this.restDir.copy(restAxis).normalize();
-      this.targetQ.setFromUnitVectors(this.restDir, this.targetDir);
+      // Delta rotation from bind-pose limb direction to the live direction,
+      // then compose it with the original bind quaternion. This avoids the
+      // extreme sleeve twists caused by treating the bind pose as identity.
+      this.targetQ
+        .setFromUnitVectors(this.restDir, this.targetDir)
+        .multiply(restQ);
 
-      const alpha = clamp(0.28 + dt * 4.0, 0.24, 0.48);
+      const alpha = clamp(0.24 + dt * 4.0, 0.22, 0.44);
       last.slerp(this.targetQ, alpha);
       bone.quaternion.copy(last);
       bone.updateMatrixWorld(true);
