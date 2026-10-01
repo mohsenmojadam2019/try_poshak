@@ -23,14 +23,17 @@ class LocalFitResult:
     processing_ms: int
     person_cache_hit: bool
     garment_cache_hit: bool
+    result_cache_hit: bool
 
 
 _POSE_LOCK = threading.Lock()
 _CACHE_LOCK = threading.Lock()
 _PERSON_CACHE: OrderedDict[str, tuple[np.ndarray, list[dict], np.ndarray | None, float]] = OrderedDict()
 _GARMENT_CACHE: OrderedDict[str, np.ndarray] = OrderedDict()
+_FIT_CACHE: OrderedDict[str, tuple[bytes, float, str]] = OrderedDict()
 _PERSON_CACHE_LIMIT = 8
 _GARMENT_CACHE_LIMIT = 24
+_FIT_CACHE_LIMIT = 48
 _POSE = mp.solutions.pose.Pose(
     static_image_mode=True,
     model_complexity=1,
@@ -162,6 +165,28 @@ def _cache_key(raw: bytes, *, max_side: int, prefix: str) -> str:
     h.update(prefix.encode("ascii"))
     h.update(str(max_side).encode("ascii"))
     h.update(raw)
+    return h.hexdigest()
+
+
+def _fit_cache_key(
+    person_raw: bytes,
+    garment_raw: bytes,
+    *,
+    category: str,
+    max_side: int,
+    scale: float,
+    width_scale: float,
+    offset_x: float,
+    offset_y: float,
+) -> str:
+    h = hashlib.blake2b(digest_size=20)
+    h.update(_cache_key(person_raw, max_side=max_side, prefix="person").encode("ascii"))
+    h.update(_cache_key(garment_raw, max_side=max_side, prefix="garment").encode("ascii"))
+    h.update(
+        f"{category}:{scale:.4f}:{width_scale:.4f}:{offset_x:.4f}:{offset_y:.4f}".encode(
+            "ascii"
+        )
+    )
     return h.hexdigest()
 
 
@@ -871,6 +896,29 @@ def fit_local(
     offset_y = float(np.clip(offset_y, -0.28, 0.28))
 
     started = time.perf_counter()
+    fit_key = _fit_cache_key(
+        person_raw,
+        garment_raw,
+        category=category,
+        max_side=max_side,
+        scale=scale,
+        width_scale=width_scale,
+        offset_x=offset_x,
+        offset_y=offset_y,
+    )
+    cached_fit = _cache_get(_FIT_CACHE, fit_key)
+    if cached_fit is not None:
+        cached_bytes, cached_quality, cached_category = cached_fit
+        return LocalFitResult(
+            image_bytes=cached_bytes,
+            pose_quality=cached_quality,
+            category=cached_category,
+            processing_ms=max(1, int((time.perf_counter() - started) * 1000)),
+            person_cache_hit=False,
+            garment_cache_hit=False,
+            result_cache_hit=True,
+        )
+
     person, chains, segmentation, quality, person_cache_hit = _prepare_person(
         person_raw,
         max_upload_bytes=max_upload_bytes,
@@ -925,11 +973,20 @@ def fit_local(
     if not ok:
         raise LocalFitError("ساخت خروجی ناموفق بود.")
 
+    image_bytes = encoded.tobytes()
+    _cache_put(
+        _FIT_CACHE,
+        fit_key,
+        (image_bytes, quality, category),
+        _FIT_CACHE_LIMIT,
+    )
+
     return LocalFitResult(
-        image_bytes=encoded.tobytes(),
+        image_bytes=image_bytes,
         pose_quality=quality,
         category=category,
         processing_ms=max(1, int((time.perf_counter() - started) * 1000)),
         person_cache_hit=person_cache_hit,
         garment_cache_hit=garment_cache_hit,
+        result_cache_hit=False,
     )

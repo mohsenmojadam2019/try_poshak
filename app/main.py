@@ -94,6 +94,7 @@ async def _fit_request(
         "cache": {
             "person": result.person_cache_hit,
             "garment": result.garment_cache_hit,
+            "result": result.result_cache_hit,
         },
     }
 

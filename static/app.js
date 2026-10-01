@@ -212,6 +212,7 @@
       const cache = data.cache || {};
       processingInfo.textContent =
         "پردازش " + speed + " میلی‌ثانیه" +
+        (cache.result ? " • نتیجه آماده از کش" : "") +
         (cache.person ? " • بدن از کش" : "") +
         (cache.garment ? " • لباس از کش" : "");
       const message = auto
