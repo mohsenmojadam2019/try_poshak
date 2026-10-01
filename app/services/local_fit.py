@@ -178,12 +178,13 @@ def _fit_cache_key(
     width_scale: float,
     offset_x: float,
     offset_y: float,
+    jpeg_quality: int,
 ) -> str:
     h = hashlib.blake2b(digest_size=20)
     h.update(_cache_key(person_raw, max_side=max_side, prefix="person").encode("ascii"))
     h.update(_cache_key(garment_raw, max_side=max_side, prefix="garment").encode("ascii"))
     h.update(
-        f"{category}:{scale:.4f}:{width_scale:.4f}:{offset_x:.4f}:{offset_y:.4f}".encode(
+        f"{category}:{scale:.4f}:{width_scale:.4f}:{offset_x:.4f}:{offset_y:.4f}:{jpeg_quality}".encode(
             "ascii"
         )
     )
@@ -886,6 +887,7 @@ def fit_local(
     width_scale: float = 1.0,
     offset_x: float = 0.0,
     offset_y: float = 0.0,
+    jpeg_quality: int = 94,
 ) -> LocalFitResult:
     if category not in {"tops", "bottoms"}:
         raise LocalFitError("فعلاً فقط پیراهن/بالاتنه و شلوار/پایین‌تنه پشتیبانی می‌شود.")
@@ -894,6 +896,7 @@ def fit_local(
     width_scale = float(np.clip(width_scale, 0.72, 1.45))
     offset_x = float(np.clip(offset_x, -0.30, 0.30))
     offset_y = float(np.clip(offset_y, -0.28, 0.28))
+    jpeg_quality = int(np.clip(jpeg_quality, 80, 96))
 
     started = time.perf_counter()
     fit_key = _fit_cache_key(
@@ -905,6 +908,7 @@ def fit_local(
         width_scale=width_scale,
         offset_x=offset_x,
         offset_y=offset_y,
+        jpeg_quality=jpeg_quality,
     )
     cached_fit = _cache_get(_FIT_CACHE, fit_key)
     if cached_fit is not None:
@@ -969,7 +973,11 @@ def fit_local(
         sleeve_reach,
     )
 
-    ok, encoded = cv2.imencode(".jpg", fitted, [int(cv2.IMWRITE_JPEG_QUALITY), 94])
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        fitted,
+        [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality],
+    )
     if not ok:
         raise LocalFitError("ساخت خروجی ناموفق بود.")
 

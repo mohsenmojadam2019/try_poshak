@@ -9,7 +9,17 @@
     busy: false,
     timer: null,
     requestId: 0,
-    personUrl: null
+    personUrl: null,
+    cameraStream: null,
+    cameraFacing: "user",
+    liveSessionId: null,
+    liveRunning: false,
+    liveBusy: false,
+    liveTimer: null,
+    liveResultVisible: true,
+    liveFrameCount: 0,
+    liveStartedAt: 0,
+    liveGeneration: 0
   };
 
   const personInput = $("personInput");
@@ -35,6 +45,21 @@
   const widthRange = $("widthRange");
   const xRange = $("xRange");
   const yRange = $("yRange");
+  const liveVideo = $("liveVideo");
+  const liveResult = $("liveResult");
+  const liveCanvas = $("liveCanvas");
+  const liveIdle = $("liveIdle");
+  const liveBodyGuide = $("liveBodyGuide");
+  const liveProcessing = $("liveProcessing");
+  const liveFps = $("liveFps");
+  const liveStatusDot = $("liveStatusDot");
+  const liveStatusText = $("liveStatusText");
+  const livePerformance = $("livePerformance");
+  const liveGarmentName = $("liveGarmentName");
+  const startCamera = $("startCamera");
+  const switchCamera = $("switchCamera");
+  const toggleLiveResult = $("toggleLiveResult");
+  const stopCamera = $("stopCamera");
   const toast = $("toast");
 
   function notify(message, type = "") {
@@ -59,7 +84,9 @@
   }
 
   function setCategory(category) {
+    const changed = state.category !== category;
     state.category = category;
+    if (changed && state.liveRunning) invalidateLiveGarmentSession();
     document.querySelectorAll(".category-chip").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.category === category);
     });
@@ -101,6 +128,8 @@
     setCategory(card.dataset.category);
 
     selectedLabel.textContent = state.garmentName;
+    liveGarmentName.textContent = state.garmentName;
+    if (state.liveRunning) invalidateLiveGarmentSession();
     customSelected.hidden = true;
     garmentInput.value = "";
     resetControls(false);
@@ -119,6 +148,8 @@
     customName.textContent = state.garmentName;
     customSelected.hidden = false;
     selectedLabel.textContent = "لباس شخصی";
+    liveGarmentName.textContent = state.garmentName;
+    if (state.liveRunning) invalidateLiveGarmentSession();
     document.querySelectorAll(".product-card").forEach((x) => x.classList.remove("active"));
 
     resetControls(false);
@@ -247,6 +278,280 @@
     if (run) scheduleFit(100);
   }
 
+  async function closeLiveSession(sessionId) {
+    if (!sessionId) return;
+    try {
+      await fetch("/api/live/session/" + encodeURIComponent(sessionId), {
+        method: "DELETE",
+        keepalive: true
+      });
+    } catch (_) {}
+  }
+
+  function invalidateLiveGarmentSession() {
+    state.liveGeneration += 1;
+    const old = state.liveSessionId;
+    state.liveSessionId = null;
+    if (old) closeLiveSession(old);
+    if (state.liveRunning) {
+      liveStatusText.textContent = "در حال آماده‌سازی لباس جدید...";
+      livePerformance.textContent = "لباس جدید برای Live Studio آماده می‌شود.";
+    }
+  }
+
+  async function ensureLiveSession(generation = state.liveGeneration) {
+    if (state.liveSessionId) return state.liveSessionId;
+
+    const form = new FormData();
+    form.append("garment_image", await getGarmentFile());
+    form.append("category", state.category);
+
+    const response = await fetch("/api/live/session", {
+      method: "POST",
+      body: form
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.detail || "ساخت جلسه دوربین ناموفق بود.");
+    }
+
+    if (generation !== state.liveGeneration) {
+      closeLiveSession(data.session_id);
+      return null;
+    }
+    state.liveSessionId = data.session_id;
+    return state.liveSessionId;
+  }
+
+  function stopCameraTracks() {
+    if (!state.cameraStream) return;
+    state.cameraStream.getTracks().forEach((track) => track.stop());
+    state.cameraStream = null;
+    liveVideo.srcObject = null;
+  }
+
+  function setLiveUiRunning(running) {
+    startCamera.disabled = running;
+    switchCamera.disabled = !running;
+    toggleLiveResult.disabled = !running || !liveResult.src;
+    stopCamera.disabled = !running;
+    liveStatusDot.className = running ? "on" : "off";
+    if (!running) {
+      liveFps.textContent = "آماده";
+      liveStatusText.textContent = "دوربین خاموش است";
+      livePerformance.textContent = "بعد از شروع، سرعت و کیفیت تشخیص اینجا نمایش داده می‌شود.";
+      liveIdle.hidden = false;
+      liveBodyGuide.hidden = false;
+      liveProcessing.hidden = true;
+      liveResult.hidden = true;
+      liveResult.src = "";
+      toggleLiveResult.textContent = "نمایش دوربین";
+      state.liveResultVisible = true;
+    }
+  }
+
+  async function openCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("مرورگر اجازه دوربین زنده نمی‌دهد. از Chrome/Edge و HTTPS یا localhost استفاده کن.");
+    }
+    if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+      throw new Error("برای دوربین زنده روی موبایل، سایت باید با HTTPS باز شود.");
+    }
+
+    stopCameraTracks();
+    const constraints = {
+      audio: false,
+      video: {
+        facingMode: { ideal: state.cameraFacing },
+        width: { ideal: 1280 },
+        height: { ideal: 960 }
+      }
+    };
+    state.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+    liveVideo.srcObject = state.cameraStream;
+    liveVideo.style.transform = state.cameraFacing === "user" ? "scaleX(-1)" : "none";
+    await liveVideo.play();
+
+    liveIdle.hidden = true;
+    liveBodyGuide.hidden = false;
+    liveStatusText.textContent = "دوربین فعال است؛ بدن را داخل کادر نگه دار";
+  }
+
+  function captureLiveFrame() {
+    const sourceW = liveVideo.videoWidth;
+    const sourceH = liveVideo.videoHeight;
+    if (!sourceW || !sourceH) return Promise.resolve(null);
+
+    const maxSide = 720;
+    const ratio = Math.min(1, maxSide / Math.max(sourceW, sourceH));
+    liveCanvas.width = Math.max(1, Math.round(sourceW * ratio));
+    liveCanvas.height = Math.max(1, Math.round(sourceH * ratio));
+    const ctx = liveCanvas.getContext("2d", { alpha: false });
+
+    ctx.save();
+    if (state.cameraFacing === "user") {
+      ctx.translate(liveCanvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(liveVideo, 0, 0, liveCanvas.width, liveCanvas.height);
+    ctx.restore();
+
+    return new Promise((resolve) => {
+      liveCanvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(null);
+            return;
+          }
+          resolve(new File([blob], "live-frame.jpg", { type: "image/jpeg" }));
+        },
+        "image/jpeg",
+        0.72
+      );
+    });
+  }
+
+  async function processLiveFrame() {
+    if (!state.liveRunning || state.liveBusy) return;
+    if (!liveVideo.videoWidth || liveVideo.readyState < 2) {
+      state.liveTimer = setTimeout(processLiveFrame, 140);
+      return;
+    }
+
+    state.liveBusy = true;
+    if (state.liveFrameCount === 0) liveProcessing.hidden = false;
+
+    try {
+      const generation = state.liveGeneration;
+      const sessionId = await ensureLiveSession(generation);
+      if (!sessionId || generation !== state.liveGeneration) return;
+      const frame = await captureLiveFrame();
+      if (!frame || !state.liveRunning) return;
+
+      const form = new FormData();
+      form.append("person_image", frame);
+      form.append("session_id", sessionId);
+      form.append("scale", String(Number(scaleRange.value) / 100));
+      form.append("width_scale", String(Number(widthRange.value) / 100));
+      form.append("offset_x", String(Number(xRange.value) / 100));
+      form.append("offset_y", String(Number(yRange.value) / 100));
+
+      const response = await fetch("/api/live/frame", {
+        method: "POST",
+        body: form
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 404) {
+        state.liveSessionId = null;
+        throw new Error("جلسه دوربین تازه‌سازی می‌شود...");
+      }
+      if (!response.ok) {
+        throw new Error(data.detail || "بدن در فریم دیده نشد.");
+      }
+      if (!state.liveRunning || generation !== state.liveGeneration) return;
+
+      liveResult.src = data.image;
+      liveResult.hidden = !state.liveResultVisible;
+      toggleLiveResult.disabled = false;
+      liveBodyGuide.hidden = true;
+
+      state.liveFrameCount += 1;
+      const elapsed = Math.max(0.1, (performance.now() - state.liveStartedAt) / 1000);
+      const fps = state.liveFrameCount / elapsed;
+      const quality = Math.round((Number(data.pose_quality) || 0) * 100);
+      const speed = Number(data.processing_ms) || 0;
+
+      liveFps.textContent = fps.toFixed(1) + " FPS";
+      liveStatusText.textContent = "Live Fit فعال است";
+      livePerformance.textContent =
+        "تشخیص بدن " + quality + "٪ • پردازش " + speed + "ms";
+    } catch (error) {
+      if (state.liveRunning) {
+        liveStatusText.textContent = "بدن کامل داخل کادر نیست";
+        livePerformance.textContent = error.message || "کمی عقب برو و روبه‌روی دوربین بایست.";
+        liveBodyGuide.hidden = false;
+      }
+    } finally {
+      state.liveBusy = false;
+      liveProcessing.hidden = true;
+      if (state.liveRunning) {
+        state.liveTimer = setTimeout(processLiveFrame, 90);
+      }
+    }
+  }
+
+  async function startLiveCamera() {
+    try {
+      state.liveRunning = true;
+      state.liveResultVisible = true;
+      state.liveFrameCount = 0;
+      state.liveStartedAt = performance.now();
+      liveGarmentName.textContent = state.garmentName;
+      setLiveUiRunning(true);
+      liveProcessing.hidden = false;
+      await openCamera();
+      await ensureLiveSession();
+      processLiveFrame();
+      notify("Live Studio فعال شد؛ تمام بدن را داخل کادر نگه دار.");
+    } catch (error) {
+      state.liveRunning = false;
+      stopCameraTracks();
+      setLiveUiRunning(false);
+      notify(error.message || "دسترسی به دوربین ممکن نشد.", "error");
+    }
+  }
+
+  async function stopLiveCamera() {
+    state.liveRunning = false;
+    state.liveBusy = false;
+    clearTimeout(state.liveTimer);
+    stopCameraTracks();
+    const old = state.liveSessionId;
+    state.liveSessionId = null;
+    setLiveUiRunning(false);
+    await closeLiveSession(old);
+  }
+
+  async function switchLiveCamera() {
+    if (!state.liveRunning) return;
+    state.cameraFacing = state.cameraFacing === "user" ? "environment" : "user";
+    try {
+      liveProcessing.hidden = false;
+      await openCamera();
+      liveResult.hidden = true;
+      state.liveFrameCount = 0;
+      state.liveStartedAt = performance.now();
+      processLiveFrame();
+    } catch (error) {
+      notify(error.message || "تعویض دوربین ممکن نشد.", "error");
+    } finally {
+      liveProcessing.hidden = true;
+    }
+  }
+
+  startCamera.addEventListener("click", startLiveCamera);
+  stopCamera.addEventListener("click", stopLiveCamera);
+  switchCamera.addEventListener("click", switchLiveCamera);
+  toggleLiveResult.addEventListener("click", () => {
+    if (!state.liveRunning || !liveResult.src) return;
+    state.liveResultVisible = !state.liveResultVisible;
+    liveResult.hidden = !state.liveResultVisible;
+    toggleLiveResult.textContent = state.liveResultVisible ? "نمایش دوربین" : "نمایش لباس";
+  });
+
+  window.addEventListener("pagehide", () => {
+    state.liveRunning = false;
+    clearTimeout(state.liveTimer);
+    stopCameraTracks();
+    if (state.liveSessionId) {
+      fetch("/api/live/session/" + encodeURIComponent(state.liveSessionId), {
+        method: "DELETE",
+        keepalive: true
+      }).catch(() => {});
+    }
+  });
+
   personInput.addEventListener("change", () => setPerson(personInput.files[0]));
   garmentInput.addEventListener("change", () => setCustomGarment(garmentInput.files[0]));
 
@@ -317,5 +622,6 @@
     setPerson(event.dataTransfer.files[0]);
   });
 
+  setLiveUiRunning(false);
   updateActions();
 })();

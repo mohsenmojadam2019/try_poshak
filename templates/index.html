@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#eef1f4">
   <title>پرو مجازی لباس | Try Poshak</title>
-  <link rel="stylesheet" href="/static/styles.css?v=6">
+  <link rel="stylesheet" href="/static/styles.css?v=9">
 </head>
 <body>
 <header class="topbar">
@@ -66,6 +66,7 @@
         <div class="guide-example good"><span class="example-person centered"></span><b>✓ درست</b><small>تمام بدن، وسط کادر</small></div>
         <div class="guide-example bad"><span class="example-person cropped"></span><b>× اشتباه</b><small>سر یا پاها بیرون کادر</small></div>
       </div>
+      <a class="camera-shortcut" href="#liveStudio"><span>◉</span> استفاده از دوربین زنده موبایل یا لپ‌تاپ</a>
     </article>
 
     <article class="card garment-card">
@@ -136,6 +137,85 @@
     </article>
   </section>
 
+  <section class="live-section" id="liveStudio">
+    <div class="live-section-head">
+      <div>
+        <span class="eyebrow">Live Studio / Video Try-On</span>
+        <h2>دوربین را روشن کن؛ لباس به‌صورت زنده روی بدنت می‌آید.</h2>
+        <p>همان لباسی که بالا انتخاب کرده‌ای در Live Studio استفاده می‌شود. دوربین موبایل یا لپ‌تاپ فریم‌ها را به موتور محلی Python می‌فرستد و نتیجه پشت سر هم به‌روزرسانی می‌شود.</p>
+      </div>
+      <span class="live-badge"><i></i> Python Live Fit</span>
+    </div>
+
+    <div class="live-grid">
+      <article class="live-camera-card">
+        <div class="live-card-head">
+          <div>
+            <b>دوربین زنده</b>
+            <small>لباس انتخاب‌شده: <strong id="liveGarmentName">پیراهن سرمه‌ای</strong></small>
+          </div>
+          <span id="liveFps">آماده</span>
+        </div>
+
+        <div class="live-stage" id="liveStage">
+          <video id="liveVideo" autoplay playsinline muted></video>
+          <img id="liveResult" alt="پرو زنده لباس" hidden>
+          <div class="live-body-guide" id="liveBodyGuide">
+            <span class="live-guide-head"></span>
+            <span class="live-guide-torso"></span>
+            <span class="live-guide-legs"></span>
+            <small>کمی عقب برو تا تمام بدن داخل کادر باشد</small>
+          </div>
+          <div class="live-idle" id="liveIdle">
+            <span>◉</span>
+            <b>Live Studio آماده است</b>
+            <small>برای شروع، اجازه دسترسی به دوربین را بده.</small>
+          </div>
+          <div class="live-processing" id="liveProcessing" hidden>
+            <span class="spinner"></span>
+            <small>در حال جایگذاری لباس...</small>
+          </div>
+        </div>
+
+        <canvas id="liveCanvas" hidden></canvas>
+
+        <div class="live-controls">
+          <button id="startCamera" class="live-primary" type="button">شروع دوربین</button>
+          <button id="switchCamera" type="button" disabled>تعویض دوربین</button>
+          <button id="toggleLiveResult" type="button" disabled>نمایش دوربین</button>
+          <button id="stopCamera" type="button" disabled>توقف</button>
+        </div>
+
+        <div class="live-meta">
+          <span id="liveStatusDot" class="off"></span>
+          <b id="liveStatusText">دوربین خاموش است</b>
+          <small id="livePerformance">بعد از شروع، سرعت و کیفیت تشخیص اینجا نمایش داده می‌شود.</small>
+        </div>
+
+        <p class="secure-note">برای دوربین زنده، مرورگر به Secure Context نیاز دارد: روی همین لپ‌تاپ <b>localhost</b> و روی موبایل <b>HTTPS</b>.</p>
+      </article>
+
+      <article class="live-example-card">
+        <div class="example-label">نمونه Video Studio</div>
+        <div class="live-example-visual">
+          <div class="example-camera-top"><i></i><span>LIVE</span></div>
+          <span class="example-live-person"></span>
+          <img src="/static/samples/tee_olive.png" alt="نمونه لباس زنده">
+          <div class="example-scan-line"></div>
+        </div>
+        <div class="example-copy">
+          <h3>کاربر جلوی دوربین می‌ایستد</h3>
+          <p>بدن در هر فریم تشخیص داده می‌شود، فرم لباس روی شانه و کمر تنظیم می‌شود و خروجی زنده جایگزین فریم قبلی می‌شود.</p>
+        </div>
+        <div class="live-example-steps">
+          <div><b>01</b><span>دوربین</span></div>
+          <div><b>02</b><span>تشخیص بدن</span></div>
+          <div><b>03</b><span>لباس زنده</span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
   <section class="examples-section">
     <div class="section-title"><span>نمونه روند کار</span><h2>کاربر دقیقاً می‌بیند باید چه‌کار کند</h2></div>
     <div class="example-flow">
@@ -148,6 +228,6 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>window.TRY_POSHAK={localEngine:true};</script>
-<script src="/static/app.js?v=6" defer></script>
+<script src="/static/app.js?v=9" defer></script>
 </body>
 </html>
