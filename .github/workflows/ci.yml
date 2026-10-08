@@ -28,4 +28,6 @@ jobs:
       - run: npm ci
       - run: npm run build:ultra
       - run: node --check static/app.js
+      - run: node --check static/garment-motion.js
+      - run: node --test tests/test_garment_motion.cjs
       - run: git diff --exit-code -- static/pro-live.bundle.js
