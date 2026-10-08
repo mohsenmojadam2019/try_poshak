@@ -7,6 +7,7 @@
   <title>پرو مجازی لباس | Try Poshak</title>
   <link rel="stylesheet" href="/static/styles.css?v=10">
   <link rel="stylesheet" href="/static/pro-live.css?v=6">
+  <link rel="stylesheet" href="/static/garment-motion.css?v=1">
 </head>
 <body>
 <header class="topbar">
@@ -88,6 +89,11 @@
         <button class="product-card hidden-product" type="button" data-category="bottoms" data-src="/static/samples/pants_black.png" data-name="شلوار مشکی"><span class="auto-label">پیشنهادی</span><img src="/static/samples/pants_black.png" alt=""><b>شلوار مشکی</b></button>
         <button class="product-card hidden-product" type="button" data-category="bottoms" data-src="/static/samples/pants_beige.png" data-name="شلوار کرم"><img src="/static/samples/pants_beige.png" alt=""><b>شلوار کرم</b></button>
         <button class="product-card hidden-product" type="button" data-category="bottoms" data-src="/static/samples/pants_blue.png" data-name="شلوار آبی"><img src="/static/samples/pants_blue.png" alt=""><b>شلوار آبی</b></button>
+      </div>
+
+      <div class="garment-motion-option">
+        <span>حرکت لباس از محصول به سمت تصویر پرو</span>
+        <button id="garmentMotionToggle" type="button" aria-pressed="true">فعال</button>
       </div>
 
       <label class="custom-upload" for="garmentInput">
@@ -348,6 +354,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>window.TRY_POSHAK={localEngine:true};</script>
 <script src="/static/app.js?v=12" defer></script>
+<script src="/static/garment-motion.js?v=1" defer></script>
 <script src="/static/pro-live.bundle.js?v=6" defer></script>
 </body>
 </html>
