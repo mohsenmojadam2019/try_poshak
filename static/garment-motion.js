@@ -38,6 +38,7 @@
   let currentSource = "/static/samples/shirt_navy.png";
   let active = null;
   let generation = 0;
+  let productWasClicked = false;
 
   function setToggleState() {
     toggle.setAttribute("aria-pressed", String(enabled));
@@ -119,7 +120,11 @@
     if (!enabled || !detail || (!detail.src && !detail.file)) return;
 
     const { src, element, releaseUrl } = sourceImage(detail);
-    const origin = element && element.getBoundingClientRect();
+    let origin = element && element.getBoundingClientRect();
+    if (detail.file && (!origin || origin.width < 2 || origin.height < 2)) {
+      const customPanel = document.getElementById("customSelected");
+      origin = customPanel && customPanel.getBoundingClientRect();
+    }
     const targetRect = stage.getBoundingClientRect();
 
     if (!origin || origin.width < 2 || origin.height < 2 ||
@@ -205,12 +210,20 @@
     setToggleState();
   });
 
+  // A repeated click on the already selected garment should replay the effect.
+  // The main app emits garmentchange synchronously from each product-card click.
+  grid.addEventListener("click", (event) => {
+    if (!event.target.closest(".product-card")) return;
+    productWasClicked = true;
+    queueMicrotask(() => { productWasClicked = false; });
+  }, true);
+
   window.addEventListener("tryposhak:garmentchange", (event) => {
     const detail = event.detail || {};
     // Category controls also emit garmentchange: avoid replaying the flight
     // when the product picture itself has not changed.
     const source = detail.file || detail.src;
-    if (!source || source === currentSource) return;
+    if (!source || (source === currentSource && !productWasClicked)) return;
     currentSource = source;
     runFlight(detail);
   });
